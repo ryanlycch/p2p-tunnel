@@ -2,8 +2,10 @@
 using common.libs.extends;
 using common.server;
 using common.server.model;
+using common.vea;
 using System;
 using System.Buffers.Binary;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace client.service.vea
@@ -16,29 +18,60 @@ namespace client.service.vea
         private readonly MessengerSender messengerSender;
         private readonly Config config;
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="messengerSender"></param>
-        /// <param name="config"></param>
         public VeaMessengerSender(MessengerSender messengerSender, Config config)
         {
             this.messengerSender = messengerSender;
             this.config = config;
         }
+
         /// <summary>
-        /// 获取ip
+        /// 获取在线设备
         /// </summary>
         /// <param name="connection"></param>
         /// <returns></returns>
-        public async Task<IPAddressInfo> IP(IConnection connection)
+        public async Task<bool> GetOnLine(IConnection connection)
         {
-            var resp = await messengerSender.SendReply(new MessageRequestWrap
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
             {
                 Connection = connection,
-                MessengerId = (ushort)VeaSocks5MessengerIds.Ip,
+                MessengerId = (ushort)VeaSocks5MessengerIds.GetOnLine,
+            }).ConfigureAwait(false);
+            if (resp.Code == MessageResponeCodes.OK)
+            {
+                return resp.Data.Span.SequenceEqual(Helper.TrueArray);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 发送在线设备
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <param name="veaLanIPAddressOnLine"></param>
+        /// <returns></returns>
+        public async Task<bool> OnLine(IConnection connection, VeaLanIPAddressOnLine veaLanIPAddressOnLine)
+        {
+            return await messengerSender.SendOnly(new MessageRequestWrap
+            {
+                Connection = connection,
+                MessengerId = (ushort)VeaSocks5MessengerIds.OnLine,
+                Payload = veaLanIPAddressOnLine.ToBytes(),
+            }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// 更新ip
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <returns></returns>
+        public async Task<IPAddressInfo> UpdateIp(IConnection connection)
+        {
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
+            {
+                Connection = connection,
+                MessengerId = (ushort)VeaSocks5MessengerIds.UpdateIp,
                 Payload = new IPAddressInfo { IP = BinaryPrimitives.ReadUInt32BigEndian(config.IP.GetAddressBytes()), LanIPs = config.VeaLanIPs }.ToBytes(),
-                Timeout = 1000
+                Timeout = 2000
             }).ConfigureAwait(false);
             if (resp.Code == MessageResponeCodes.OK)
             {
@@ -60,12 +93,12 @@ namespace client.service.vea
         /// <returns></returns>
         public async Task<bool> Reset(IConnection connection, ulong id)
         {
-            var resp = await messengerSender.SendReply(new MessageRequestWrap
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
             {
                 Connection = connection,
                 MessengerId = (ushort)VeaSocks5MessengerIds.Reset,
                 Payload = id.ToBytes(),
-                Timeout = 15000
+                Timeout = 2000
             }).ConfigureAwait(false);
 
             if (resp.Code == MessageResponeCodes.OK)
@@ -73,8 +106,30 @@ namespace client.service.vea
                 return resp.Data.Span.SequenceEqual(Helper.TrueArray);
             }
             return false;
-
         }
 
+        /// <summary>
+        /// 分配个ip
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <param name="ip"></param>
+        /// <returns></returns>
+        public async Task<uint> AssignIP(IConnection connection, byte ip)
+        {
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
+            {
+                Connection = connection,
+                MessengerId = (ushort)VeaSocks5MessengerIds.AssignIP,
+                Timeout = 2000,
+                Payload = new byte[] { ip },
+            }).ConfigureAwait(false);
+
+            if (resp.Code == MessageResponeCodes.OK)
+            {
+                return  resp.Data.Span.ToUInt32();
+            }
+            return 0;
+
+        }
     }
 }

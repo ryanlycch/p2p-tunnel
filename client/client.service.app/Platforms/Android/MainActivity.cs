@@ -1,11 +1,12 @@
 ﻿using Android.App;
 using Android.Content;
 using Android.Content.PM;
-using Android.Media;
 using Android.OS;
-using Android.Util;
 using Android.Views;
 using AndroidX.Core.App;
+using Activity = Android.App.Activity;
+using Intent = Android.Content.Intent;
+
 
 namespace client.service.app
 {
@@ -18,27 +19,28 @@ namespace client.service.app
             Window.SetStatusBarColor(Android.Graphics.Color.Transparent);
             Window.SetNavigationBarColor(Android.Graphics.Color.Transparent);
 
-            //KeepManager.GetInstance().RegisterKeep(this);
-            //StartForegroundService(new Intent(this, typeof(ForegroundService)));
-
             base.OnCreate(savedInstanceState);
+
+             Intent intent = new Intent(this, typeof(ForegroundService));
+             StartForegroundService(intent);
         }
 
         protected override void OnStart()
         {
             base.OnStart();
-            //StartService(new Intent(this, typeof(ForegroundService)));
         }
 
         protected override void OnDestroy()
         {
             base.OnDestroy();
         }
+
     }
 
 
-
-    [Service(Name = "com.myapp.droid.BackgroundService", Exported = true)]
+    //https://www.superweb999.com/article/1971766.html
+    [Service(Name = "com.myapp.android.BackgroundService", Exported = true)]
+    [IntentFilter(new string[] { "com.myapp.droid.BackgroundService" })]
     public sealed class ForegroundService : Service
     {
         private static readonly int SERVICE_ID = 10000;
@@ -96,79 +98,6 @@ namespace client.service.app
         public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId)
         {
             return StartCommandResult.Sticky;
-        }
-    }
-
-
-    [Activity(Theme = "@style/Maui.SplashTheme", ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation | ConfigChanges.UiMode | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
-    public class AliveActivity : Activity
-    {
-        protected override void OnCreate(Bundle savedInstanceState)
-        {
-            base.OnCreate(savedInstanceState);
-
-            Android.Views.Window window = this.Window;
-            window.SetGravity(GravityFlags.Start | GravityFlags.Top);
-            WindowManagerLayoutParams @params = window.Attributes;
-
-            //宽高
-            @params.Width = 1;
-            @params.Height = 1;
-            //设置位置
-            @params.X = 0;
-            @params.Y = 0;
-            window.Attributes = @params;
-
-            KeepManager.GetInstance().SetKeep(this);
-        }
-
-
-        protected override void OnDestroy()
-        {
-            base.OnDestroy();
-        }
-    }
-    public sealed class KeepManager
-    {
-        private static readonly KeepManager mInstance = new KeepManager();
-
-        private WeakReference<Android.App.Activity> mKeepActivity;
-
-        public KeepManager()
-        {
-
-        }
-
-        public static KeepManager GetInstance()
-        {
-            return mInstance;
-        }
-
-        public void RegisterKeep(Context context)
-        {
-            StartKeep(context);
-        }
-
-        public void StartKeep(Context context)
-        {
-            Intent intent = new Intent(context, typeof(AliveActivity));
-            // 结合 taskAffinity 一起使用 在指定栈中创建这个activity
-            intent.SetFlags(ActivityFlags.NewTask);
-            context.StartActivity(intent);
-        }
-
-        public void SetKeep(AliveActivity keep)
-        {
-            mKeepActivity = new WeakReference<Activity>(keep);
-        }
-    }
-
-    public sealed class BootReceiver : BroadcastReceiver
-    {
-        public override void OnReceive(Context context, Intent intent)
-        {
-            Intent toIntent = context.PackageManager.GetLaunchIntentForPackage(context.PackageName);
-            context.StartActivity(toIntent);
         }
     }
 }

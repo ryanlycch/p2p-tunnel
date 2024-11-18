@@ -1,6 +1,9 @@
 ﻿using client.service.ui.api.clientServer;
+using common.forward;
 using common.libs.extends;
+using common.proxy;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace client.service.forward
 {
@@ -9,7 +12,7 @@ namespace client.service.forward
     /// </summary>
     public sealed class ForwardClientService : IClientService
     {
-        private readonly ForwardTransfer  forwardTransfer;
+        private readonly ForwardTransfer forwardTransfer;
         public ForwardClientService(ForwardTransfer forwardTransfer)
         {
             this.forwardTransfer = forwardTransfer;
@@ -55,11 +58,13 @@ namespace client.service.forward
         /// 删除转发
         /// </summary>
         /// <param name="arg"></param>
-        public void RemoveForward(ClientServiceParamsInfo arg)
+        public bool RemoveForward(ClientServiceParamsInfo arg)
         {
             P2PForwardRemoveParams fmodel = arg.Content.DeJson<P2PForwardRemoveParams>();
             forwardTransfer.RemoveP2PForward(fmodel);
+            return true;
         }
+
         /// <summary>
         /// 监听列表
         /// </summary>
@@ -106,5 +111,16 @@ namespace client.service.forward
             return true;
         }
 
+        public async Task<EnumProxyCommandStatusMsg> Test(ClientServiceParamsInfo arg)
+        {
+            TestTargetInfo fmodel = arg.Content.DeJson<TestTargetInfo>();
+            return await forwardTransfer.Test(fmodel.Host, fmodel.Port);
+        }
+    }
+
+    public sealed class TestTargetInfo
+    {
+        public string Host { get; set; }
+        public int Port { get; set; }
     }
 }

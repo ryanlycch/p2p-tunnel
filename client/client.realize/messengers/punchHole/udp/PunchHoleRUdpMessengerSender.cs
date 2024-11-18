@@ -1,20 +1,20 @@
 ﻿using client.messengers.clients;
 using client.messengers.punchHole;
 using client.messengers.punchHole.udp;
-using client.messengers.singnin;
+using client.messengers.signin;
 using client.realize.messengers.crypto;
 using common.libs;
 using common.libs.extends;
 using common.server;
 using common.server.model;
 using common.server.servers.rudp;
+using LiteNetLib;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Threading.Tasks;
 
 namespace client.realize.messengers.punchHole.udp
@@ -62,8 +62,8 @@ namespace client.realize.messengers.punchHole.udp
                 Tcs = tcs,
                 LocalPort = param.LocalPort,
             });
-            AddSendTimeout(param.Id);
 
+            AddSendTimeout(param.Id);
             await punchHoleMessengerSender.Request(new SendPunchHoleArg<PunchHoleStep1Info>
             {
                 Connection = Connection,
@@ -76,8 +76,7 @@ namespace client.realize.messengers.punchHole.udp
         public async Task InputData(PunchHoleStepModel model)
         {
             PunchHoleUdpSteps step = (PunchHoleUdpSteps)model.RawData.PunchStep;
-
-            RemoveSendTimeout(model.RawData.FromId);
+            //if (step ==  PunchHoleUdpSteps.STEP_4) return;
             OnStepHandler?.Invoke(this, model);
             switch (step)
             {
@@ -155,7 +154,7 @@ namespace client.realize.messengers.punchHole.udp
         {
             if (connectCache.TryGetValue(toid, out ConnectCacheModel cache))
             {
-                cache.SendTimeout = wheelTimer.NewTimeout(new WheelTimerTimeoutTask<object> { Callback = SendTimeout, State = toid }, 5000);
+                cache.SendTimeout = wheelTimer.NewTimeout(new WheelTimerTimeoutTask<object> { Callback = SendTimeout, State = toid }, 10000);
             }
         }
         private void RemoveSendTimeout(ulong toid)
@@ -165,7 +164,6 @@ namespace client.realize.messengers.punchHole.udp
                 cache.SendTimeout?.Cancel();
             }
         }
-
 
         private async Task OnStep1(PunchHoleStepModel model)
         {
@@ -182,9 +180,31 @@ namespace client.realize.messengers.punchHole.udp
                         continue;
                     }
                     udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(ip, data.LocalPort));
+                    udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(ip, data.Port));
+
+                    for (int i = 0; i <= 128; i++)
+                    {
+                        if (data.Port + i < ushort.MaxValue)
+                        {
+                            udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(ip, data.LocalPort + i));
+                            udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(ip, data.Port + i));
+                        }
+                    }
+
                 }
-                udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(data.Ip, data.Port));
-                udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(data.Ip, data.Port + 1));
+
+                if (NotIPv6Support(data.Ip) == false)
+                {
+                    for (int i = 0; i <= 128; i++)
+                    {
+                        if (data.Port + i < ushort.MaxValue)
+                        {
+                            udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(data.Ip, data.LocalPort + i));
+                            udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(data.Ip, data.Port + i));
+                        }
+                    }
+                }
+
 
                 AddSendTimeout(model.RawData.FromId);
                 await punchHoleMessengerSender.Request(new SendPunchHoleArg<PunchHoleStep2Info>
@@ -205,65 +225,111 @@ namespace client.realize.messengers.punchHole.udp
         private async Task OnStep2(PunchHoleStepModel model)
         {
             await Task.Run(async () =>
-             {
-                 PunchHoleNotifyInfo data = model.Data as PunchHoleNotifyInfo;
-                 if (connectCache.TryGetValue(model.RawData.FromId, out ConnectCacheModel cache) == false)
-                 {
-                     Logger.Instance.Error($"udp 找不到缓存");
-                     await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
-                     return;
-                 }
-                 if (clientInfoCaching.GetUdpserver(model.RawData.FromId, out UdpServer udpServer) == false)
-                 {
-                     Logger.Instance.Error($"udp 找不到通道服务器：{model.RawData.FromId}");
-                     await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
-                     return;
-                 }
+            {
+                RemoveSendTimeout(model.RawData.FromId);
+                PunchHoleNotifyInfo data = model.Data as PunchHoleNotifyInfo;
+                if (connectCache.TryGetValue(model.RawData.FromId, out ConnectCacheModel cache) == false)
+                {
+                    Logger.Instance.Error($"udp 找不到缓存");
+                    await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
+                    return;
+                }
+                if (clientInfoCaching.GetUdpserver(model.RawData.FromId, out UdpServer udpServer) == false)
+                {
+                    Logger.Instance.Error($"udp 找不到通道服务器：{model.RawData.FromId}");
+                    await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
+                    return;
+                }
 
-                 List<IPEndPoint> ips = new List<IPEndPoint>();
-                 if (UseLocalPort)
-                 {
-                     var locals = data.LocalIps.Where(c => c.Equals(IPAddress.Any) == false && c.AddressFamily == AddressFamily.InterNetwork).Select(c => new IPEndPoint(c, data.LocalPort)).ToList();
-                     ips.AddRange(locals);
-                 }
-                 if (IPv6Support() && data.Ip.IsLan() == false)
-                 {
-                     var locals = data.LocalIps.Where(c => c.AddressFamily == AddressFamily.InterNetworkV6).Select(c => new IPEndPoint(c, data.Port)).ToList();
-                     ips.AddRange(locals);
-                 }
-                 ips.Add(new IPEndPoint(data.Ip, data.Port));
-                 ips.Add(new IPEndPoint(data.Ip, data.Port + 1));
+                List<IPEndPoint> ips = new List<IPEndPoint>();
+                if (UseLocalPort)
+                {
+                    ips.AddRange(data.LocalIps
+                        .Where(c => c.Equals(IPAddress.Any) == false && (c.AddressFamily == AddressFamily.InterNetwork || c.IsIPv4MappedToIPv6))
+                        .Select(c => new IPEndPoint(c, data.LocalPort)));
+                    ips.AddRange(data.LocalIps
+                        .Where(c => c.Equals(IPAddress.Any) == false && c.Equals(IPAddress.Loopback) == false && (c.AddressFamily == AddressFamily.InterNetwork || c.IsIPv4MappedToIPv6))
+                        .Select(c => new IPEndPoint(c, data.Port)));
+                }
+                if (IPv6Support() && data.Ip.IsLan() == false)
+                {
+                    ips.AddRange(data.LocalIps
+                        .Where(c => NotIPv6Support(c) == false && c.AddressFamily == AddressFamily.InterNetworkV6 && c.IsIPv4MappedToIPv6 == false)
+                        .Select(c => new IPEndPoint(c, data.Port)));
+                }
 
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                {
+                    Logger.Instance.Debug($"尝试连接局域网:{string.Join("\n", ips.Select(c => c.ToString()).ToArray())}");
+                }
+                try
+                {
+                    //链接局域网
+                    List<NetPeer> peers = ips.Select(ip => udpServer.Connect(ip)).ToList();
+                    await Task.Delay(1000);
+                    NetPeer peer = peers.FirstOrDefault(c => c != null && c.ConnectionState == ConnectionState.Connected);
+                    foreach (NetPeer item in peers.Where(c => c != null && ReferenceEquals(c, peer) == false && c.ConnectionState != ConnectionState.Connected))
+                    {
+                        item.Disconnect();
+                    }
 
-                 IConnection connection = null;
-                 for (int i = 0; i < ips.Count; i++)
-                 {
-                     IPEndPoint ip = i >= ips.Count - 1 ? ips[^1] : ips[i];
-                     if (NotIPv6Support(ip.Address))
-                     {
-                         continue;
-                     }
-                     Logger.Instance.DebugDebug($"udp {ip} connect");
-                     connection = await udpServer.CreateConnection(ip);
-                     if (connection != null)
-                     {
-                         break;
-                     }
-                     else
-                     {
-                         Logger.Instance.DebugError($"udp {ip} connect fail");
-                     }
-                 }
-                 if (connection != null)
-                 {
-                     await CryptoSwap(connection).ConfigureAwait(false);
-                     await SendStep3(connection, model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
-                 }
-                 else
-                 {
-                     await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
-                 }
-             });
+                    if (peer == null && NotIPv6Support(data.Ip) == false)
+                    {
+                        //链接广域网
+                        ips = new List<IPEndPoint>();
+                        for (int i = 0; i <= 128; i++)
+                        {
+                            if (data.Port + i < ushort.MaxValue)
+                            {
+                                ips.Add(new IPEndPoint(data.Ip, data.Port + i));
+                                udpServer.SendUnconnectedMessage(Helper.EmptyArray, new IPEndPoint(data.Ip, data.Port + i));
+                            }
+                        }
+                        //Logger.Instance.DebugDebug($"尝试连接:{string.Join("\n", ips.Select(c => c.ToString()).ToArray())}");
+                        peers = ips.Select(ip => udpServer.Connect(ip)).ToList();
+                        await Task.Delay(1000);
+                        peer = peers.FirstOrDefault(c => c != null && c.ConnectionState == ConnectionState.Connected);
+                        foreach (NetPeer item in peers.Where(c => c != null && ReferenceEquals(c, peer) == false && c.ConnectionState != ConnectionState.Connected))
+                        {
+                            item.Disconnect();
+                        }
+
+                        //再次链接广域网
+                        if (peer == null || peer.ConnectionState != ConnectionState.Connected)
+                        {
+                            peers = ips.Select(ip => udpServer.Connect(ip)).ToList();
+                            await Task.Delay(2000);
+                            peer = peers.FirstOrDefault(c => c != null && c.ConnectionState == ConnectionState.Connected);
+                            foreach (NetPeer item in peers.Where(c => c != null && ReferenceEquals(c, peer) == false && c.ConnectionState != ConnectionState.Connected))
+                            {
+                                item.Disconnect();
+                            }
+                        }
+                    }
+                    if (peer != null && peer.ConnectionState == ConnectionState.Connected)
+                    {
+                        IConnection connection = peer.Tag as IConnection;
+                        if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                            Logger.Instance.Debug($"udp {connection.Address} connect");
+                        await CryptoSwap(connection).ConfigureAwait(false);
+                        await SendStep3(connection, model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await SendStep2Fail(model.RawData.FromId, model.RawData.NewTunnel).ConfigureAwait(false);
+                        if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                            Logger.Instance.Error($"udp {data.Ip}:{data.Port} connect fail");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    {
+                        Logger.Instance.Error($"udp {data.Ip}:{data.Port} connect fail");
+                        Logger.Instance.Error(ex);
+                    }
+                }
+            });
         }
         private async Task CryptoSwap(IConnection connection)
         {
@@ -356,6 +422,7 @@ namespace client.realize.messengers.punchHole.udp
         }
         public async Task OnStep3(PunchHoleStepModel model)
         {
+            RemoveSendTimeout(model.RawData.FromId);
             await punchHoleMessengerSender.Request(new SendPunchHoleArg<PunchHoleStep4Info>
             {
                 Connection = model.Connection,
@@ -369,6 +436,7 @@ namespace client.realize.messengers.punchHole.udp
 
         public void OnStep4(PunchHoleStepModel model)
         {
+            RemoveSendTimeout(model.RawData.FromId);
             if (connectCache.TryRemove(model.RawData.FromId, out ConnectCacheModel cache))
             {
                 cache.Tcs.SetResult(new ConnectResultModel { State = true });

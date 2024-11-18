@@ -1,39 +1,43 @@
 <template>
     <div class="wrap">
-        <div class="content">
-            <el-row v-if="clients.length > 0">
-                <template v-for="(item,index) in clients" :key="index">
-                    <el-col :xs="24" :sm="12" :md="12" :lg="12" :xl="12">
-                        <div class="item">
-                            <dl v-loading="item.Connecting">
-                                <dt>{{item.Name}}</dt>
-                                <dd :style="item.connectTypeStyle" :title="item.IPAddress" class="flex line" @click="handleShowDelay(item)">
-                                    <span class="label">{{item.serverType}}</span>
-                                    <span>{{item.connectTypeStr}}</span>
-                                    <span class="flex-1"></span>
-                                    <Signal :value="item.Ping"></Signal>
-                                </dd>
-                                <dd class="t-c plugins flex">
-                                    <template v-for="(item1,index) in components" :key="index">
-                                        <div class="item">
-                                            <component :is="item1" :params="item"></component>
-                                        </div>
-                                    </template>
-                                </dd>
-                                <dd class="t-r btns">
-                                    <el-button plain text bg size="small" @click="handleConnect(item)">连它</el-button>
-                                    <el-button plain text bg size="small" @click="handleConnectReverse(item)">连我</el-button>
-                                    <el-button plain text bg size="small" @click="handleConnectReset(item)">重启</el-button>
-                                    <el-button plain text bg size="small" v-if="item.Connected" @click="handleConnectOffline(item)">断开</el-button>
-                                </dd>
-                            </dl>
-                        </div>
-                    </el-col>
-                </template>
-            </el-row>
-            <el-empty v-else description="空的，请确保各节点使用了同一分组编号，同一服务器" />
-        </div>
-        <RelayView v-if="state.showDelay" v-model="state.showDelay" @success="handleOnRelay"></RelayView>
+        <el-tabs type="border-card">
+            <el-tab-pane label="主页">
+                <div class="content">
+                    <el-row v-if="clients.length > 0">
+                        <template v-for="(item,index) in clients" :key="index">
+                            <el-col :xs="24" :sm="12" :md="12" :lg="12" :xl="12">
+                                <div class="item">
+                                    <dl v-loading="item.Connecting">
+                                        <dt>{{item.name}}</dt>
+                                        <dd :style="item.connectTypeStyle" :title="item.IPAddress" class="flex line" @click="handleShowDelay(item)">
+                                            <span class="label">{{item.serverType}}</span>
+                                            <span>{{item.connectTypeStr}}</span>
+                                            <span class="flex-1"></span>
+                                            <Signal :value="item.Ping"></Signal>
+                                        </dd>
+                                        <dd class="t-c plugins flex">
+                                            <template v-for="(item1,index) in components" :key="index">
+                                                <div class="item">
+                                                    <component :is="item1" :params="item"></component>
+                                                </div>
+                                            </template>
+                                        </dd>
+                                        <dd class="t-r btns">
+                                            <el-button plain text bg size="small" @click="handleConnect(item)">连它</el-button>
+                                            <el-button plain text bg size="small" @click="handleConnectReverse(item)">连我</el-button>
+                                            <el-button plain text bg size="small" @click="handleConnectReset(item)">重启</el-button>
+                                            <el-button plain text bg size="small" v-if="item.Connected" @click="handleConnectOffline(item)">断开</el-button>
+                                        </dd>
+                                    </dl>
+                                </div>
+                            </el-col>
+                        </template>
+                    </el-row>
+                    <el-empty v-else description="暂无数据，请确保各节点使用了同一分组编号，同一服务器" />
+                </div>
+                <RelayView v-if="state.showDelay" v-model="state.showDelay" @success="handleOnRelay"></RelayView>
+            </el-tab-pane>
+        </el-tabs>
     </div>
 </template>
 
@@ -72,6 +76,7 @@ export default {
                 c.connectTypeStr = shareDataState.clientConnectTypes[c.ConnectType];
                 c.connectTypeStyle = connectTypeColors[c.ConnectType];
                 c.serverType = shareDataState.serverTypes[c.ServerType];
+                c.name = `${c.Name}`
             });
             return clientsState.clients;
         });
@@ -83,12 +88,12 @@ export default {
                     cancelButtonText: '取消',
                     type: 'warning',
                 }).then(() => {
-                    sendClientConnect(row.Id);
+                    sendClientConnect(row.ConnectionId);
                 }).catch(() => {
 
                 });
             } else {
-                sendClientConnect(row.Id);
+                sendClientConnect(row.ConnectionId);
             }
         }
         const handleConnectReverse = (row) => {
@@ -98,12 +103,12 @@ export default {
                     cancelButtonText: '取消',
                     type: 'warning',
                 }).then(() => {
-                    sendClientConnectReverse(row.Id);
+                    sendClientConnectReverse(row.ConnectionId);
                 }).catch(() => {
 
                 });
             } else {
-                sendClientConnectReverse(row.Id);
+                sendClientConnectReverse(row.ConnectionId);
             }
         }
         const handleConnectReset = (row) => {
@@ -112,7 +117,7 @@ export default {
                 cancelButtonText: '取消',
                 type: 'warning',
             }).then(() => {
-                sendClientReset(row.Id);
+                sendClientReset(row.ConnectionId);
             }).catch(() => {
 
             });
@@ -123,7 +128,7 @@ export default {
                 cancelButtonText: '取消',
                 type: 'warning',
             }).then(() => {
-                sendClientOffline(row.Id);
+                sendClientOffline(row.ConnectionId);
             }).catch(() => {
             });
         }
@@ -150,7 +155,7 @@ export default {
         });
         provide('share-data', state);
         const handleShowDelay = (item) => {
-            state.toId = item.Id;
+            state.toId = item.ConnectionId;
             state.showDelay = true;
         }
         const handleOnRelay = (relayPath) => {
@@ -167,9 +172,11 @@ export default {
 }
 </script>
 <style lang="stylus" scoped>
-.content {
-    padding: 1rem;
+.wrap {
+    padding: 2rem;
+}
 
+.content {
     .item {
         padding: 1rem 0.6rem;
     }

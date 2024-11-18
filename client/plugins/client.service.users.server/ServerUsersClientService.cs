@@ -1,12 +1,9 @@
-﻿using client.messengers.singnin;
+﻿using client.messengers.signin;
 using client.service.ui.api.clientServer;
-using common.libs;
 using common.libs.extends;
 using common.server;
 using common.server.model;
-using server.service.users.model;
-using System;
-using System.Collections.Generic;
+using common.user;
 using System.Threading.Tasks;
 
 namespace client.service.users.server
@@ -28,7 +25,7 @@ namespace client.service.users.server
         public async Task<string> List(ClientServiceParamsInfo arg)
         {
             UserInfoPageModel page = arg.Content.DeJson<UserInfoPageModel>();
-            var resp = await messengerSender.SendReply(new MessageRequestWrap
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
             {
                 Connection = signInStateInfo.Connection,
                 MessengerId = (ushort)UsersMessengerIds.Page,
@@ -62,7 +59,7 @@ namespace client.service.users.server
             {
                 Connection = signInStateInfo.Connection,
                 MessengerId = (ushort)UsersMessengerIds.Password,
-                Payload = arg.Content.ToUTF8Bytes()
+                Payload = arg.Content.DeJson<UserPasswordInfo>().ToBytes()
             });
             if (resp.Code != MessageResponeCodes.OK)
             {
@@ -86,19 +83,33 @@ namespace client.service.users.server
             return string.Empty;
         }
 
-
         public async Task<string> Info(ClientServiceParamsInfo arg)
         {
-            var resp = await messengerSender.SendReply(new MessageRequestWrap
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
             {
                 Connection = signInStateInfo.Connection,
                 MessengerId = (ushort)UsersMessengerIds.Info
             });
-            if (resp.Code == MessageResponeCodes.OK && resp.Data.Span.SequenceEqual(Helper.FalseArray) == false)
+            if (resp.Code == MessageResponeCodes.OK)
             {
                 return resp.Data.GetUTF8String();
             }
             return new UserInfo().ToJson();
+        }
+
+        public async Task<string> PasswordSelf(ClientServiceParamsInfo arg)
+        {
+            MessageResponeInfo resp = await messengerSender.SendReply(new MessageRequestWrap
+            {
+                Connection = signInStateInfo.Connection,
+                MessengerId = (ushort)UsersMessengerIds.PasswordSelf,
+                Payload = arg.Content.ToUTF8Bytes()
+            });
+            if (resp.Code != MessageResponeCodes.OK)
+            {
+                return resp.Data.GetUTF8String();
+            }
+            return string.Empty;
         }
     }
 }

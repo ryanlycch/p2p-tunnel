@@ -2,12 +2,12 @@
 using common.server;
 using common.server.model;
 using server.messengers;
-using server.messengers.singnin;
+using server.messengers.signin;
 using server.service.validators;
 using System;
 using System.Threading.Tasks;
 
-namespace server.service.messengers.singnin
+namespace server.service.messengers.signin
 {
 
     /// <summary>
@@ -32,8 +32,9 @@ namespace server.service.messengers.singnin
         {
             SignInParamsInfo model = new SignInParamsInfo();
             model.DeBytes(connection.ReceiveRequestWrap.Payload);
+            model.Connection = connection;
 
-            uint access = (uint)EnumServiceAccess.None;
+            uint access = (uint)common.server.EnumServiceAccess.None;
             //登入验证
             SignInResultInfo.SignInResultInfoCodes code = signInValidatorHandler.Validate(model, ref access);
             if (code != SignInResultInfo.SignInResultInfoCodes.OK)
@@ -51,6 +52,7 @@ namespace server.service.messengers.singnin
                 ShortId = model.ShortId,
                 LocalPort = model.LocalTcpPort,
                 Connection = connection,
+                ConnectionId = model.ConnectionId,
                 UserAccess = access,
                 Args = model.Args
             });

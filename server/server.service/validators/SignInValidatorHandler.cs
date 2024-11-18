@@ -1,6 +1,5 @@
 ﻿using common.server.model;
-using server.messengers.singnin;
-using server.messengers;
+using server.messengers.signin;
 using Microsoft.Extensions.DependencyInjection;
 using common.libs;
 using System.Reflection;
@@ -17,7 +16,6 @@ namespace server.service.validators
         private readonly Config config;
         private readonly IClientSignInCaching clientSignInCache;
         private readonly ServiceProvider serviceProvider;
-
         public SignInValidatorHandler(Config config, IClientSignInCaching clientSignInCache, ServiceProvider serviceProvider)
         {
             this.config = config;
@@ -40,19 +38,6 @@ namespace server.service.validators
                     last = last.Next;
                 }
             }
-
-            var validators = ReflectionHelper.GetInterfaceSchieves(assemblys, typeof(ISignInValidator)).Distinct()
-                .Select(c => (ISignInValidator)serviceProvider.GetService(c));
-
-            Logger.Instance.Debug("权限值,uint 每个权限占一位，最多32个权限");
-            if (validators.Select(c => c.Access).Distinct().Count() != validators.Count())
-            {
-                Logger.Instance.Error("有冲突");
-            }
-            foreach (var item in validators.OrderBy(c => c.Access))
-            {
-                Logger.Instance.Info($"{Convert.ToString(item.Access, 2).PadLeft(32, '0')}  {item.Name}");
-            }
         }
 
         public SignInResultInfo.SignInResultInfoCodes Validate(SignInParamsInfo model, ref uint access)
@@ -64,15 +49,30 @@ namespace server.service.validators
             }
 
             //重名
-            if (clientSignInCache.Get(model.GroupId, model.Name, out SignInCacheInfo client))
+            if (clientSignInCache.Get(model.ConnectionId, out SignInCacheInfo client))
             {
-                return SignInResultInfo.SignInResultInfoCodes.SAME_NAMES;
+                try
+                {
+                    //同个设备
+                    if (model.Connection.Address.Address.Equals(client.Connection.Address.Address) && model.LocalIps[1].Equals(client.LocalIps[1]))
+                    {
+                        clientSignInCache.Remove(client.ConnectionId);
+                    }
+                    else
+                    {
+                        model.ConnectionId = 0;
+                    }
+                }
+                catch (Exception)
+                {
+                    clientSignInCache.Remove(client.ConnectionId);
+                }
             }
 
             //是管理员分组的
             if (string.IsNullOrWhiteSpace(config.AdminGroup) == false && model.GroupId == config.AdminGroup)
             {
-                access |= (uint)EnumServiceAccess.All;
+                access |= (uint)common.server.EnumServiceAccess.All;
             }
             else
             {
@@ -103,7 +103,7 @@ namespace server.service.validators
             }
         }
 
-        class Wrap<T>
+        sealed class Wrap<T>
         {
             public T Value { get; set; }
             public Wrap<T> Next { get; set; }

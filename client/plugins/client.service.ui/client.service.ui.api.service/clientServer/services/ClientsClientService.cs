@@ -1,5 +1,5 @@
 ﻿using client.messengers.clients;
-using client.messengers.singnin;
+using client.messengers.signin;
 using client.service.ui.api.clientServer;
 using common.libs.extends;
 using common.server;
@@ -84,18 +84,7 @@ namespace client.service.ui.api.service.clientServer.services
         /// <param name="arg"></param>
         public async Task<bool> Offline(ClientServiceParamsInfo arg)
         {
-            if (clientInfoCaching.Get(ulong.Parse(arg.Content), out ClientInfo client))
-            {
-                if (client.OnlineType == ClientOnlineTypes.Active)
-                {
-                    clientInfoCaching.Offline(client.Id);
-                }
-                else
-                {
-                    await clientsTransfer.SendOffline(client.Id);
-                }
-            }
-
+            await clientsTransfer.Offline(ulong.Parse(arg.Content));
             return true;
         }
 

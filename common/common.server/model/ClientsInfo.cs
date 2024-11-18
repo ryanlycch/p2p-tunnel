@@ -9,9 +9,6 @@ namespace common.server.model
     /// </summary>
     public sealed class ClientsInfo
     {
-        /// <summary>
-        /// 
-        /// </summary>
         public ClientsInfo() { }
 
         /// <summary>
@@ -19,10 +16,6 @@ namespace common.server.model
         /// </summary>
         public ClientsClientInfo[] Clients { get; set; } = Array.Empty<ClientsClientInfo>();
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
         public byte[] ToBytes()
         {
             int length = 0, dataLength = Clients.Length;
@@ -50,10 +43,6 @@ namespace common.server.model
             return bytes;
 
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="data"></param>
         public void DeBytes(ReadOnlyMemory<byte> data)
         {
             var span = data.Span;
@@ -81,7 +70,7 @@ namespace common.server.model
         /// <summary>
         /// id
         /// </summary>
-        public ulong Id { get; set; }
+        public ulong ConnectionId { get; set; }
         /// <summary>
         /// 名字
         /// </summary>
@@ -89,7 +78,8 @@ namespace common.server.model
         /// <summary>
         /// 权限
         /// </summary>
-        public uint Access { get; set; }
+        public uint ClientAccess { get; set; }
+        public uint UserAccess { get; set; }
 
         /// <summary>
         /// 连接对象
@@ -103,6 +93,7 @@ namespace common.server.model
 
             var bytes = new byte[
                 4
+                + 4
                 + 8
                 + 1 + 1 + nameBytes.Length
                 ];
@@ -110,10 +101,12 @@ namespace common.server.model
 
             int index = 0;
 
-            Access.ToBytes(memory.Slice(index));
+            ClientAccess.ToBytes(memory.Slice(index));
+            index += 4;
+            UserAccess.ToBytes(memory.Slice(index));
             index += 4;
 
-            Id.ToBytes(memory.Slice(index));
+            ConnectionId.ToBytes(memory.Slice(index));
             index += 8;
 
             bytes[index] = (byte)nameBytes.Length;
@@ -131,10 +124,12 @@ namespace common.server.model
             var span = data.Span;
             int index = 0;
 
-            Access = span.Slice(index, 4).ToUInt32();
+            ClientAccess = span.Slice(index, 4).ToUInt32();
+            index += 4;
+            UserAccess = span.Slice(index, 4).ToUInt32();
             index += 4;
 
-            Id = span.Slice(index, 8).ToUInt64();
+            ConnectionId = span.Slice(index, 8).ToUInt64();
             index += 8;
 
             Name = span.Slice(index + 2, span[index]).GetUTF16String(span[index + 1]);

@@ -7,7 +7,6 @@ using System.Buffers;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace common.server.servers.rudp
 {
@@ -24,12 +23,16 @@ namespace common.server.servers.rudp
         private NetManager server;
         private EventBasedNetListener listener;
 
+        public int port { get; private set; }
+
         public void Start(int port)
         {
+            this.port = port;
             Start(port, 20000);
         }
         public void Start(int port, int timeout = 20000)
         {
+            this.port = port;
             listener = new EventBasedNetListener();
             server = new NetManager(listener);
             server.UnconnectedMessagesEnabled = true;
@@ -104,8 +107,10 @@ namespace common.server.servers.rudp
                         }
                     }
                 }
-
-                OnMessage?.Invoke(remoteEndPoint, data.Slice(4));
+                else
+                {
+                    OnMessage?.Invoke(remoteEndPoint, data.Slice(4));
+                }
             };
         }
 
@@ -168,12 +173,27 @@ namespace common.server.servers.rudp
             }
             catch (Exception ex)
             {
-                Logger.Instance.DebugError(ex);
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
                 return null;
             }
             finally
             {
                 Release();
+            }
+        }
+
+        public NetPeer Connect(IPEndPoint address)
+        {
+            try
+            {
+                return server.Connect(address, string.Empty);
+            }
+            catch (Exception ex)
+            {
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
+                return null;
             }
         }
 

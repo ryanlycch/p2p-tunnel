@@ -51,18 +51,18 @@ namespace client.service.ui.api.service.clientServer.services
         /// </summary>
         /// <param name="arg"></param>
         /// <returns></returns>
-        public async Task Save(ClientServiceParamsInfo arg)
+        public async Task<bool> Save(ClientServiceParamsInfo arg)
         {
             SaveParamsInfo model = arg.Content.DeJson<SaveParamsInfo>();
             var plugin = clientServer.GetConfigure(model.ClassName);
             if (plugin != null)
             {
-                string msg = await plugin.Save(model.Content).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(msg) == false)
+                if (await plugin.Save(model.Content).ConfigureAwait(false) == false)
                 {
-                    arg.SetCode(ClientServiceResponseCodes.Error, msg);
+                    arg.SetCode(ClientServiceResponseCodes.Error, "configure fail");
                 }
             }
+            return true;
         }
         /// <summary>
         /// 获取服务列表

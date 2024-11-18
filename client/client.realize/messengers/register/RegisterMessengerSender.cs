@@ -1,4 +1,4 @@
-﻿using client.messengers.singnin;
+﻿using client.messengers.signin;
 using common.libs;
 using common.server;
 using common.server.model;
@@ -7,7 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 
-namespace client.realize.messengers.singnin
+namespace client.realize.messengers.signin
 {
     public sealed class SignInMessengerSender
     {
@@ -24,12 +24,13 @@ namespace client.realize.messengers.singnin
         public async Task<SignInResult> SignIn()
         {
             IPAddress[] localIps = new IPAddress[] { config.Client.LoopbackIp, signInState.LocalInfo.LocalIp };
+            localIps = localIps.Concat(signInState.LocalInfo.RouteIps).ToArray();
             localIps = localIps.Concat(signInState.LocalInfo.Ipv6s).ToArray();
 
             SignInParamsInfo param = new SignInParamsInfo
             {
                 ShortId = config.Client.ShortId,
-                Id = 0,
+                ConnectionId = config.Client.ConnectId,
                 Name = config.Client.Name,
                 Args = config.Client.Args,
                 GroupId = config.Client.GroupId,
@@ -37,7 +38,7 @@ namespace client.realize.messengers.singnin
                 LocalTcpPort = signInState.LocalInfo.Port,
                 ClientAccess = (uint)config.Client.GetAccess()
             };
-            param.Args.TryAdd("version",Helper.Version);
+            param.Args["version"] = Helper.Version;
 
             MessageResponeInfo tcpResult = await messengerSender.SendReply(new MessageRequestWrap
             {

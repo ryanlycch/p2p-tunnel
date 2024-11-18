@@ -1,13 +1,18 @@
 <template>
     <div class="absolute flex">
         <div class="content h-100 flex-1 flex flex-column">
-            <div class="inner flex-1 scrollbar" ref="contentDom">
-                <template v-for="(item,index) in leftMenus" :key="index">
-                    <el-divider content-position="left" border-style="dotted">{{item.text}}</el-divider>
-                    <div class="setting-item">
-                        <component :is="item.component.value" :ref="`setting_item_${item.text}`" />
-                    </div>
-                </template>
+            <div class="wrap flex-1 scrollbar">
+                <el-tabs type="border-card">
+                    <el-tab-pane label="主页">
+                        <div class="inner " ref="contentDom">
+                            <template v-for="(item,index) in leftMenus" :key="index">
+                                <div class="setting-item" :class="{animate:state.animate}" :style="`animation-delay:${index*0.1}s`">
+                                    <component :is="item.component.value" :ref="`setting_item_${item.text}`" />
+                                </div>
+                            </template>
+                        </div>
+                    </el-tab-pane>
+                </el-tabs>
             </div>
             <div class="btn" v-if="leftMenus.length > 0">
                 <el-button type="primary" size="default" @click="handleSave" :loading="state.loading">应用更改</el-button>
@@ -17,7 +22,7 @@
 </template> 
 
 <script>
-import { getCurrentInstance, computed, watch, reactive, ref, shallowRef } from '@vue/runtime-core'
+import { getCurrentInstance, computed, watch, reactive, ref, shallowRef, onMounted } from '@vue/runtime-core'
 import { useRouter } from 'vue-router'
 import { injectServices, accessService } from '../../../states/services'
 import { ElMessage } from 'element-plus/lib/components'
@@ -70,11 +75,16 @@ export default {
 
         const state = reactive({
             loading: false,
-            currentMenu: 0
+            currentMenu: 0,
+            animate: false
         });
+        onMounted(() => {
+            setTimeout(() => {
+                state.animate = true;
+            }, 1000);
+        })
 
         const contentDom = ref(null);
-
         const getFuns = () => {
             const refs = instance.refs;
             const promises = [];
@@ -112,8 +122,8 @@ export default {
 
 <style lang="stylus" scoped>
 .content {
-    .inner {
-        padding-bottom: 2rem;
+    .wrap {
+        padding: 2rem;
         box-sizing: border-box;
     }
 
@@ -122,14 +132,21 @@ export default {
         padding: 1rem;
         text-align: center;
         box-shadow: -1px 1px 0.6rem rgba(0, 0, 0, 0.05);
+        background-color: #fff;
     }
 }
 
 .setting-item {
-    margin: 0 2rem 0rem 2rem;
-    border: 1px solid #ececec;
-    background-color: #fff;
-    padding: 2rem;
-    border-radius: 4px;
+    transition: 0.3s;
+    opacity: 0;
+    transform: translate3d(0, -20px, 0);
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    animation: bounceInDown 0.3s;
+    animation-fill-mode: both;
+
+    .el-divider {
+        margin-top: 0;
+    }
 }
 </style>

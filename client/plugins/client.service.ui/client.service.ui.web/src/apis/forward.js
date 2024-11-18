@@ -1,10 +1,11 @@
 import { sendWebsocketMsg } from "./request";
+import { getConfigure, saveConfigure } from './configure'
 
 export const getConfig = () => {
-    return sendWebsocketMsg(`configure/configure`, 'ForwardClientConfigure');
+    return getConfigure('ForwardClientConfigure');
 }
 export const updateConfig = (content) => {
-    return sendWebsocketMsg(`configure/save`, { ClassName: 'ForwardClientConfigure', Content: content });
+    return saveConfigure('ForwardClientConfigure', JSON.stringify(content));
 }
 
 export const get = (id) => {
@@ -36,5 +37,11 @@ export const removeForward = (listenid, forwardid) => {
     return sendWebsocketMsg(`forward/RemoveForward`, {
         ListenID: listenid,
         ForwardID: forwardid
+    });
+}
+export const testForward = (host, port) => {
+    return sendWebsocketMsg(`forward/Test`, {
+        host: host,
+        port: port
     });
 }

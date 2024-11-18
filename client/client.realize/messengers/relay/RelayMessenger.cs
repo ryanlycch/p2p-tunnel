@@ -1,5 +1,5 @@
 ﻿using client.messengers.clients;
-using client.messengers.singnin;
+using client.messengers.signin;
 using client.messengers.relay;
 using common.libs;
 using common.libs.extends;
@@ -12,7 +12,6 @@ namespace client.realize.messengers.relay
     /// <summary>
     /// 中继
     /// </summary>
-
     [MessengerIdRange((ushort)RelayMessengerIds.Min, (ushort)RelayMessengerIds.Max)]
     public sealed class RelayMessenger : IMessenger
     {
@@ -68,10 +67,9 @@ namespace client.realize.messengers.relay
                 {
                     Id = signInStateInfo.ConnectId,
                     ToId = fromid,
-                    Connects = clientInfoCaching.All().Where(c => c.Connected && c.ConnectType == ClientConnectTypes.P2P).Select(c => c.Id).ToArray(),
+                    Connects = clientInfoCaching.All().Where(c => c.Connected && c.ConnectType == ClientConnectTypes.P2P && relayValidator.Validate(connection)).Select(c => c.ConnectionId).ToArray(),
                 });
             }
-
         }
 
         [MessengerId((ushort)RelayMessengerIds.Connects)]

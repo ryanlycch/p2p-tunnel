@@ -21,7 +21,7 @@ namespace common.server.servers.iocp
         public Action<IConnection> OnDisconnect { get; set; } = (IConnection connection) => { };
         public Action<IConnection> OnConnected { get; set; } = (connection) => { };
         public Action<Socket> OnConnected1 { get; set; } = (socket) => { };
-       
+
 
         public TcpServer() { }
         public void SetBufferSize(int bufferSize = 8 * 1024)
@@ -98,19 +98,17 @@ namespace common.server.servers.iocp
         }
         private void ProcessAccept(SocketAsyncEventArgs e)
         {
-            if (isReceive)
+            if (e.AcceptSocket != null)
             {
-                if (e.AcceptSocket != null)
+                e.AcceptSocket.KeepAlive(20, 5, 5);
+                if (isReceive)
                 {
                     BindReceive(e.AcceptSocket, bufferSize);
+                    StartAccept(e);
                 }
-                StartAccept(e);
-            }
-            else
-            {
-                if (OnConnected1 != null)
+                else
                 {
-                    OnConnected1(e.AcceptSocket);
+                    OnConnected1?.Invoke(e.AcceptSocket);
                 }
             }
         }
@@ -123,7 +121,6 @@ namespace common.server.servers.iocp
                 {
                     return null;
                 }
-
 
                 this.bufferSize = bufferSize;
                 AsyncUserToken userToken = new AsyncUserToken
@@ -152,7 +149,8 @@ namespace common.server.servers.iocp
             }
             catch (Exception ex)
             {
-                Logger.Instance.DebugError(ex);
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
             }
             return null;
         }
@@ -185,7 +183,7 @@ namespace common.server.servers.iocp
                         }
                     }
 
-                    if (token.Socket.Connected == false || token.Port != port)
+                    if (token.Socket.Connected == false)
                     {
                         token.Connection.SocketError = SocketError.SocketError;
                         CloseClientSocket(e);
@@ -205,15 +203,15 @@ namespace common.server.servers.iocp
             }
             catch (Exception ex)
             {
-                Logger.Instance.DebugError(ex);
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
                 CloseClientSocket(e);
             }
         }
         private async Task ReadPacket(AsyncUserToken token, byte[] data, int offset, int length)
         {
-            if (token.Port != port) return;
-
             //是一个完整的包
+            
             if (token.DataBuffer.Size == 0 && length > 4)
             {
                 Memory<byte> memory = data.AsMemory(offset, length);
@@ -225,7 +223,7 @@ namespace common.server.servers.iocp
                     return;
                 }
             }
-
+            
             //不是完整包
             token.DataBuffer.AddRange(data, offset, length);
             do
@@ -288,7 +286,7 @@ namespace common.server.servers.iocp
         }
     }
 
-   
+
     public sealed class AsyncUserToken
     {
         public IConnection Connection { get; set; }

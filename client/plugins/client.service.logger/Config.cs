@@ -1,4 +1,5 @@
-﻿using common.libs.database;
+﻿using common.libs;
+using common.libs.database;
 using common.libs.extends;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Threading.Tasks;
@@ -11,15 +12,8 @@ namespace client.service.logger
     [Table("logger-appsettings")]
     public sealed class Config
     {
-        /// <summary>
-        /// 
-        /// </summary>
         public Config() { }
         private readonly IConfigDataProvider<Config> configDataProvider;
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="configDataProvider"></param>
         public Config(IConfigDataProvider<Config> configDataProvider)
         {
             this.configDataProvider = configDataProvider;
@@ -27,17 +21,23 @@ namespace client.service.logger
             Config config = ReadConfig().Result;
             Enable = config.Enable;
             MaxLength = config.MaxLength;
+            SaveConfig().Wait();
         }
 
 
         /// <summary>
         /// 开启
         /// </summary>
-        public bool Enable { get; set; } = false;
+        public bool Enable { get; set; } = true;
         /// <summary>
         /// 行数
         /// </summary>
         public int MaxLength { get; set; } = 100;
+#if DEBUG
+        public LoggerTypes LoggerLevel { get; set; } = LoggerTypes.DEBUG;
+#else
+        public LoggerTypes LoggerLevel { get; set; } = LoggerTypes.WARNING;
+#endif
 
         /// <summary>
         /// 读取
@@ -45,7 +45,7 @@ namespace client.service.logger
         /// <returns></returns>
         public async Task<Config> ReadConfig()
         {
-            return await configDataProvider.Load();
+            return await configDataProvider.Load() ?? new Config();
         }
         /// <summary>
         /// 读取
@@ -67,7 +67,14 @@ namespace client.service.logger
 
             Enable = _config.Enable;
             MaxLength = _config.MaxLength;
+            LoggerLevel = _config.LoggerLevel;
+            Logger.Instance.LoggerLevel = LoggerLevel;
             await configDataProvider.Save(jsonStr).ConfigureAwait(false);
+        }
+        public async Task SaveConfig()
+        {
+            Logger.Instance.LoggerLevel = LoggerLevel;
+            await configDataProvider.Save(this).ConfigureAwait(false);
         }
     }
 }

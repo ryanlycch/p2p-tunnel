@@ -1,5 +1,4 @@
-﻿using common.libs;
-using common.server;
+﻿using common.server;
 using common.server.servers.rudp;
 using System;
 using System.Collections.Generic;
@@ -45,13 +44,7 @@ namespace client.messengers.clients
         /// <param name="client"></param>
         /// <returns></returns>
         public bool Get(ulong id, out ClientInfo client);
-        /// <summary>
-        /// 按名获取
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="client"></param>
-        /// <returns></returns>
-        public bool GetByName(string name, out ClientInfo client);
+
         /// <summary>
         /// 所有
         /// </summary>
@@ -67,13 +60,13 @@ namespace client.messengers.clients
         /// </summary>
         /// <param name="id"></param>
         /// <param name="val"></param>
-        public void SetConnecting(ulong id,bool val);
+        public void SetConnecting(ulong id, bool val);
         /// <summary>
         /// 掉线
         /// </summary>
         /// <param name="id"></param>
         /// <param name="offlineType"></param>
-        public void Offline(ulong id,ClientOfflineTypes offlineType = ClientOfflineTypes.Manual);
+        public void Offline(ulong id, ClientOfflineTypes offlineType = ClientOfflineTypes.Manual);
         /// <summary>
         /// 上线
         /// </summary>
@@ -81,7 +74,7 @@ namespace client.messengers.clients
         /// <param name="connection"></param>
         /// <param name="connectType"></param>
         /// <param name="onlineType"></param>
-        public void Online(ulong id, IConnection connection, ClientConnectTypes connectType, ClientOnlineTypes onlineType);
+        public void Online(ulong id, IConnection connection, ClientConnectTypes connectType);
         /// <summary>
         /// 删除
         /// </summary>
@@ -107,7 +100,7 @@ namespace client.messengers.clients
         /// </summary>
         /// <param name="id"></param>
         /// <param name="server"></param>
-        public void AddUdpserver(ulong id, UdpServer server);
+        public void AddUdpserver(ulong id, IServer server);
         /// <summary>
         /// 通道服务端
         /// </summary>
@@ -125,6 +118,6 @@ namespace client.messengers.clients
         /// <summary>
         /// 清除所有
         /// </summary>
-        public void Clear();
+        public void Clear(bool empty = false);
     }
 }

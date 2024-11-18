@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,25 +25,36 @@ namespace common.proxy
         private ConcurrentDictionary<ConnectionKeyUdp, UdpToken> udpConnections = new(new ConnectionKeyUdpComparer());
         private readonly SemaphoreSlim Semaphore = new SemaphoreSlim(1);
         private readonly IProxyMessengerSender proxyMessengerSender;
+        private readonly Config config;
+        private readonly ProxyPluginValidatorHandler pluginValidatorHandler;
 
         private readonly WheelTimer<object> wheelTimer;
 
-        public ProxyClient(WheelTimer<object> wheelTimer, IProxyMessengerSender proxyMessengerSender)
+        public ProxyClient(WheelTimer<object> wheelTimer, IProxyMessengerSender proxyMessengerSender, Config config, ProxyPluginValidatorHandler pluginValidatorHandler)
         {
             this.wheelTimer = wheelTimer;
             this.proxyMessengerSender = proxyMessengerSender;
+            this.config = config;
+            this.pluginValidatorHandler = pluginValidatorHandler;
             TimeoutUdp();
-
         }
 
         public async Task InputData(ProxyInfo info)
         {
-            bool pluginExists = ProxyPluginLoader.GetPlugin(info.PluginId, out IProxyPlugin plugin);
+            //Console.WriteLine($"{info.RequestId}=================================={info.Step}");
             if (info.Step == EnumProxyStep.Command)
             {
-                if (pluginExists == false || plugin.ValidateAccess(info) == false)
+                info.IsMagicData = ProxyHelper.GetIsMagicData(info.Data);
+                if (ProxyPluginLoader.GetPlugin(info.PluginId, out IProxyPlugin plugin) == false)
                 {
-                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow);
+                    _ = ConnectReponse(info, EnumProxyCommandStatus.ServerError, EnumProxyCommandStatusMsg.Plugin);
+                    return;
+                }
+                info.ProxyPlugin = plugin;
+                if (pluginValidatorHandler.Validate(info) == false)
+                {
+                    EnumProxyCommandStatusMsg statusMsg = info.CommandStatusMsg;
+                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow, statusMsg);
                     return;
                 }
                 _ = Command(info);
@@ -53,10 +65,9 @@ namespace common.proxy
             }
             else if (info.Step == EnumProxyStep.ForwardUdp)
             {
-                await ForwardUdp(info, plugin);
+                await ForwardUdp(info);
             }
         }
-
         private async Task Command(ProxyInfo info)
         {
             try
@@ -67,44 +78,49 @@ namespace common.proxy
                 }
                 else if (info.Command == EnumProxyCommand.UdpAssociate)
                 {
-                    _ = ConnectReponse(info, EnumProxyCommandStatus.ConnecSuccess);
+                    _ = ConnectReponse(info, EnumProxyCommandStatus.ConnecSuccess, EnumProxyCommandStatusMsg.Success);
                 }
                 else if (info.Command == EnumProxyCommand.Bind)
                 {
-                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow);
+                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow, EnumProxyCommandStatusMsg.Connect);
                 }
                 else
                 {
-                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow);
+                    _ = ConnectReponse(info, EnumProxyCommandStatus.CommandNotAllow, EnumProxyCommandStatusMsg.Connect);
                 }
             }
             catch (Exception ex)
             {
                 Logger.Instance.Error(ex);
-                _ = ConnectReponse(info, EnumProxyCommandStatus.ConnectFail);
+                _ = ConnectReponse(info, EnumProxyCommandStatus.ConnectFail, EnumProxyCommandStatusMsg.Connect);
                 return;
             }
             await Task.CompletedTask;
 
         }
-
         private async Task ForwardTcp(ProxyInfo info)
         {
             ConnectionKey key = new ConnectionKey(info.Connection.ConnectId, info.RequestId);
-
             if (connections.TryGetValue(key, out AsyncServerUserToken token))
             {
                 token.Data.Step = info.Step;
                 token.Data.Command = info.Command;
                 token.Data.Rsv = info.Rsv;
+                token.Data.Connection = info.Connection;
                 if (info.Data.Length > 0 && token.TargetSocket.Connected)
                 {
                     try
                     {
-                        await token.TargetSocket.SendAsync(info.Data, SocketFlags.None).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                        //Console.WriteLine($"forward-rid:{token.Data.RequestId}-{token.TargetSocket.LocalEndPoint}->{token.TargetSocket.RemoteEndPoint}-{Encoding.UTF8.GetString(token.Data.Data.Span)}");
+                        int length = await token.TargetSocket.SendAsync(info.Data, SocketFlags.None).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                        //Console.WriteLine($"forward-rid2:{token.Data.RequestId}-{token.TargetSocket.LocalEndPoint}->{token.TargetSocket.RemoteEndPoint}-{length}");
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
+                        if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                        {
+                            Logger.Instance.Error($"proxy forward tcp send :{ex}");
+                        }
                         CloseClientSocket(token);
                     }
                 }
@@ -114,32 +130,36 @@ namespace common.proxy
                 }
             }
         }
-        private async Task ForwardUdp(ProxyInfo info, IProxyPlugin plugin)
+        private async Task ForwardUdp(ProxyInfo info)
         {
-            IPEndPoint remoteEndpoint = ReadRemoteEndPoint(info);
-            if (remoteEndpoint.Port == 0) return;
-
-            bool isBroadcast = info.TargetAddress.GetIsBroadcastAddress();
-            if (isBroadcast && plugin.UdpBind.Equals(IPAddress.Any))
-            {
-                remoteEndpoint.Address = IPAddress.Loopback;
-            }
-
             ConnectionKeyUdp key = new ConnectionKeyUdp(info.Connection.ConnectId, info.SourceEP);
             try
             {
-
                 if (udpConnections.TryGetValue(key, out UdpToken token) == false)
                 {
+                    IPEndPoint remoteEndpoint = ReadRemoteEndPoint(info);
+                    if (remoteEndpoint.Port == 0) return;
+
+                    if (ProxyPluginLoader.GetPlugin(info.PluginId, out IProxyPlugin plugin) == false) return;
+                    info.ProxyPlugin = plugin;
+                    if (pluginValidatorHandler.Validate(info) == false)
+                    {
+                        return;
+                    }
+                    bool isBroadcast = info.TargetAddress.GetIsBroadcastAddress();
+                    if (isBroadcast && plugin.BroadcastBind.Equals(IPAddress.Any))
+                    {
+                        remoteEndpoint.Address = IPAddress.Loopback;
+                    }
+
                     Socket socket = new Socket(remoteEndpoint.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
                     if (isBroadcast)
                     {
-                        //Console.WriteLine($"绑定：{new IPEndPoint(plugin.UdpBind, 0)} <---> {remoteEndpoint}");
-                        socket.Bind(new IPEndPoint(plugin.UdpBind, 0));
+                        socket.Bind(new IPEndPoint(plugin.BroadcastBind, 0));
                         socket.EnableBroadcast = true;
                     }
                     socket.WindowsUdpBug();
-                    token = new UdpToken { Data = info, TargetSocket = socket, Key = key };
+                    token = new UdpToken { Data = info, TargetSocket = socket, Key = key, TargetEP = remoteEndpoint };
                     token.PoolBuffer = new byte[65535];
                     udpConnections.AddOrUpdate(key, token, (a, b) => token);
 
@@ -152,22 +172,26 @@ namespace common.proxy
                 }
                 else
                 {
-                    //Console.WriteLine($"发送：{token.TargetSocket.LocalEndPoint} <---> {remoteEndpoint}");
                     token.Data.Step = info.Step;
                     token.Data.Command = info.Command;
                     token.Data.Rsv = info.Rsv;
+                    token.Data.Connection = info.Connection;
                     token.Update();
-                    await token.TargetSocket.SendToAsync(info.Data, SocketFlags.None, remoteEndpoint);
+                    await token.TargetSocket.SendToAsync(info.Data, SocketFlags.None, token.TargetEP);
                     token.Data.Data = Helper.EmptyArray;
                 }
             }
             catch (Exception ex)
             {
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                {
+                    Logger.Instance.Error($"proxy forward udp send :{ex}");
+                }
                 if (udpConnections.TryRemove(key, out UdpToken _token))
                 {
                     _token.Clear();
                 }
-                Logger.Instance.DebugError($"socks5 forward udp -> sendto {remoteEndpoint} : {info.Data.Length}  " + ex);
+                //Logger.Instance.DebugError($"socks5 forward udp -> sendto {remoteEndpoint} : {info.Data.Length}  " + ex);
             }
         }
         private void TimeoutUdp()
@@ -188,7 +212,7 @@ namespace common.proxy
                         }
                     }
                 }
-            }, 1000, true);
+            }, 5000, true);
         }
         private async void ReceiveCallbackUdp(IAsyncResult result)
         {
@@ -209,17 +233,21 @@ namespace common.proxy
             }
             catch (Exception ex)
             {
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                {
+                    Logger.Instance.Error($"socks5 forward udp -> receive" + ex);
+                }
                 if (udpConnections.TryRemove(token.Key, out _))
                 {
                     token.Clear();
                 }
-                Logger.Instance.DebugError($"socks5 forward udp -> receive" + ex);
             }
         }
 
         private void Connect(ProxyInfo info)
         {
             IPEndPoint remoteEndpoint = ReadRemoteEndPoint(info);
+            //Console.WriteLine($"connect {remoteEndpoint}");
             Socket socket = new Socket(remoteEndpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.SendTimeout, true);
@@ -265,18 +293,22 @@ namespace common.proxy
             {
                 if (e.SocketError == SocketError.Success)
                 {
-                    int length = token.Data.Data.Length;
-                    if (length > 0)
+                    //Console.WriteLine($"connect-rid:{token.Data.RequestId}-{token.TargetSocket.LocalEndPoint}->{token.TargetSocket.RemoteEndPoint}");
+                    if (token.Data.Data.Length > 0 && token.Data.IsMagicData == false)
                     {
+                        //Console.WriteLine($"connect-rid:{token.Data.RequestId}-{token.TargetSocket.LocalEndPoint}->{token.TargetSocket.RemoteEndPoint}-{Encoding.UTF8.GetString(token.Data.Data.Span)}");
                         await token.TargetSocket.SendAsync(token.Data.Data, SocketFlags.None).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-                        token.Data.Data = Helper.EmptyArray;
                     }
-                    await ConnectReponse(token.Data, EnumProxyCommandStatus.ConnecSuccess);
-                    token.Data.TargetAddress = Helper.EmptyArray;
+                    await ConnectReponse(token.Data, EnumProxyCommandStatus.ConnecSuccess, EnumProxyCommandStatusMsg.Success);
                     token.Data.Step = EnumProxyStep.ForwardTcp;
-
+                    token.Data.Data = Helper.EmptyArray;
+                    if (token.Data.IsMagicData)
+                    {
+                        CloseClientSocket(token);
+                        return;
+                    }
+                    token.Data.TargetAddress = Helper.EmptyArray;
                     BindTargetReceive(token);
-                    return;
                 }
                 else
                 {
@@ -300,15 +332,16 @@ namespace common.proxy
                     {
                         command = EnumProxyCommandStatus.ServerError;
                     }
-                    await ConnectReponse(token.Data, command);
+                    await ConnectReponse(token.Data, command, EnumProxyCommandStatusMsg.Connect);
                     CloseClientSocket(token);
                 }
             }
             catch (Exception ex)
             {
-                Logger.Instance.DebugError(ex);
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
                 command = EnumProxyCommandStatus.ServerError;
-                await ConnectReponse(token.Data, command);
+                await ConnectReponse(token.Data, command, EnumProxyCommandStatusMsg.Connect);
                 CloseClientSocket(token);
             }
         }
@@ -338,14 +371,15 @@ namespace common.proxy
         }
         private async void TargetProcessReceive(SocketAsyncEventArgs e)
         {
+            AsyncServerUserToken token = (AsyncServerUserToken)e.UserToken;
             try
             {
-                AsyncServerUserToken token = (AsyncServerUserToken)e.UserToken;
                 if (e.BytesTransferred > 0 && e.SocketError == SocketError.Success)
                 {
+                    //Console.WriteLine($"response-rid:{token.Data.RequestId}-{Encoding.UTF8.GetString(e.Buffer.AsMemory(e.Offset, e.BytesTransferred).Span)}");
                     if (token.Data.Step == EnumProxyStep.Command)
                     {
-                        await ConnectReponse(token.Data, EnumProxyCommandStatus.ConnecSuccess);
+                        await ConnectReponse(token.Data, EnumProxyCommandStatus.ConnecSuccess, EnumProxyCommandStatusMsg.Success);
                         token.Data.Step = EnumProxyStep.ForwardTcp;
                     }
 
@@ -387,14 +421,20 @@ namespace common.proxy
             catch (Exception ex)
             {
                 CloseClientSocket(e);
-                Logger.Instance.DebugError(ex);
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error(ex);
             }
         }
 
-        private async Task ConnectReponse(ProxyInfo info, EnumProxyCommandStatus command)
+        private async Task ConnectReponse(ProxyInfo info, EnumProxyCommandStatus command, EnumProxyCommandStatusMsg commandStatusMsg)
         {
-            info.Response[0] = (byte)command;
-            info.Data = info.Response;
+            if (info.IsMagicData == false)
+            {
+                info.Data = Helper.TrueArray;
+            }
+
+            info.CommandStatus = command;
+            info.CommandStatusMsg = commandStatusMsg;
             await Receive(info);
         }
         private async Task<bool> Receive(AsyncServerUserToken token)
@@ -409,9 +449,19 @@ namespace common.proxy
         private async Task<bool> Receive(ProxyInfo info)
         {
             await Semaphore.WaitAsync();
-            bool res = await proxyMessengerSender.Response(info);
-            Semaphore.Release();
-            return res;
+            try
+            {
+                return await proxyMessengerSender.Response(info);
+            }
+            catch (Exception)
+            {
+
+            }
+            finally
+            {
+                Semaphore.Release();
+            }
+            return false;
         }
 
         private void CloseClientSocket(SocketAsyncEventArgs e)
@@ -428,8 +478,9 @@ namespace common.proxy
             {
                 token.IsClosed = true;
                 token.Clear();
+                token.Data.Data = Helper.TrueArray;
+                _ = Receive(token.Data);
                 connections.TryRemove(token.Key, out _);
-                // _ = socks5MessengerSender.ResponseClose(token.Data);
                 return true;
             }
             return false;
@@ -456,6 +507,7 @@ namespace common.proxy
             }
             return new IPEndPoint(ip, info.TargetPort);
         }
+
     }
 
     public sealed class AsyncServerUserToken
@@ -504,6 +556,7 @@ namespace common.proxy
         public byte[] PoolBuffer { get; set; }
         public long LastTime { get; set; } = DateTimeHelper.GetTimeStamp();
         public EndPoint TempRemoteEP = new IPEndPoint(IPAddress.Any, IPEndPoint.MinPort);
+        public EndPoint TargetEP = new IPEndPoint(IPAddress.Any, IPEndPoint.MinPort);
         public void Clear()
         {
             TargetSocket?.SafeClose();

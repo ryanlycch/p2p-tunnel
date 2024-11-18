@@ -1,68 +1,33 @@
-﻿using common.libs.extends;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace common.libs
 {
-    /// <summary>
-    /// 
-    /// </summary>
     public static class NetworkHelper
     {
-        [DllImport("ws2_32.dll")]
-        private static extern int inet_addr(string cp);
-        [DllImport("IPHLPAPI.dll")]
-        private static extern int SendARP(Int32 DestIP, Int32 SrcIP, ref Int64 pMacAddr, ref Int32 PhyAddrLen);
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="hostip"></param>
-        /// <returns></returns>
-        public static string GetMacAddress(string hostip)
-        {
-            string mac;
-            try
-            {
-                int ldest = inet_addr(hostip);
-                long macinfo = new();
-                int len = 6;
-                SendARP(ldest, 0, ref macinfo, ref len);
-                string tmpMac = Convert.ToString(macinfo, 16).PadLeft(12, '0');
-                mac = tmpMac[..2].ToUpper(System.Globalization.CultureInfo.CurrentCulture);
-                for (int i = 2; i < tmpMac.Length; i += 2)
-                {
-                    mac = tmpMac.Substring(i, 2).ToUpper(System.Globalization.CultureInfo.CurrentCulture) + ":" + mac;
-                }
-            }
-            catch (Exception)
-            {
-                return string.Empty;
-            }
-            return mac;
-        }
-
         /// <summary>
         /// 获取路由层数，自己与外网距离几个网关，用于发送一个对方网络收不到没有回应的数据包
         /// </summary>
         /// <returns></returns>
-        public static ushort GetRouteLevel()
+        public static ushort GetRouteLevel(out List<IPAddress> ips)
         {
+            ips = new List<IPAddress>();
             try
             {
                 List<string> starts = new() { "10.", "100.", "192.168.", "172." };
-                IEnumerable<IPAddress> list = GetTraceRoute("www.baidu.com");
+                var list = GetTraceRoute("www.baidu.com").ToList();
                 for (ushort i = 0; i < list.Count(); i++)
                 {
                     string ip = list.ElementAt(i).ToString();
-                    if (ip.StartsWith(starts[0], StringComparison.Ordinal) || ip.StartsWith(starts[1], StringComparison.Ordinal) || ip.StartsWith(starts[2], StringComparison.Ordinal))
+                    if (ip.StartsWith(starts[0], StringComparison.Ordinal) || ip.StartsWith(starts[1], StringComparison.Ordinal) || ip.StartsWith(starts[2], StringComparison.Ordinal) || ip.StartsWith(starts[3], StringComparison.Ordinal))
                     {
-
+                        if (ip.StartsWith(starts[2], StringComparison.Ordinal) == false)
+                            ips.Add(list.ElementAt(i));
                     }
                     else
                     {
@@ -75,11 +40,6 @@ namespace common.libs
             }
             return 0;
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="hostNameOrAddress"></param>
-        /// <returns></returns>
         public static IEnumerable<IPAddress> GetTraceRoute(string hostNameOrAddress)
         {
             return GetTraceRoute(hostNameOrAddress, 1);
@@ -122,28 +82,6 @@ namespace common.libs
             }
             return result;
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="address"></param>
-        /// <param name="timeout"></param>
-        /// <returns></returns>
-        public static bool Ping(IPAddress address, int timeout = 100)
-        {
-            try
-            {
-                using Ping pinger = new();
-                PingReply reply = pinger.Send(address, timeout);
-                if (reply.Status == IPStatus.Success)
-                {
-                    return true;
-                }
-            }
-            catch (Exception)
-            {
-            }
-            return false;
-        }
 
         /// <summary>
         /// 获取一个随机端口
@@ -161,7 +99,7 @@ namespace common.libs
             Random rd = new();
             while (true)
             {
-                ushort port = (ushort)rd.Next(10000, 56000);
+                ushort port = (ushort)rd.Next(20000, 60000);
                 if (!allPorts.Contains(port))
                 {
                     return port;
@@ -245,95 +183,25 @@ namespace common.libs
             return list[0];
         }
 
-        /// <summary>
-        /// 地址转数组，端口必须2字节
-        /// </summary>
-        /// <param name="ip"></param>
-        /// <param name="port"></param>
-        /// <returns></returns>
-        public static Memory<byte> EndpointToArray(string ip, ushort port)
-        {
-            return EndpointToArray(ip.ToBytes(), port.ToBytes());
-        }
-        /// <summary>
-        /// 地址转数组，端口必须2字节
-        /// </summary>
-        /// <param name="ip"></param>
-        /// <param name="port"></param>
-        /// <returns></returns>
-        public static Memory<byte> EndpointToArray(Memory<byte> ip, Memory<byte> port)
-        {
-            Memory<byte> endpoint = new byte[ip.Length + port.Length];
-            ip.CopyTo(endpoint.Slice(0, ip.Length));
-            port.CopyTo(endpoint.Slice(ip.Length, port.Length));
 
-            return endpoint;
-        }
-        /// <summary>
-        /// 从数组获取端口
-        /// </summary>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static ushort PortFromArray(Memory<byte> array)
+        public static byte MaskLength(uint ip)
         {
-            return array.Span.Slice(array.Length - 2, 2).ToUInt16();
+            byte maskLength = 32;
+            for (int i = 0; i < sizeof(uint); i++)
+            {
+                if (((ip >> (i * 8)) & 0x000000ff) != 0)
+                {
+                    break;
+                }
+                maskLength -= 8;
+            }
+            return maskLength;
         }
-        /// <summary>
-        /// 从数组中解析地址，端口必须2字节
-        /// </summary>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static IPEndPoint EndpointFromArray(Memory<byte> array)
+        public static uint MaskValue(byte maskLength)
         {
-            var span = array.Span;
-            try
-            {
-                string ip = span.Slice(0, array.Length - 2).GetString();
-                int port = span.Slice(array.Length - 2, 2).ToUInt16();
-                return new IPEndPoint(GetDomainIp(ip), port);
-            }
-            catch (Exception ex)
-            {
-                Logger.Instance.Error(span.Slice(0, array.Length - 2).GetString());
-                Logger.Instance.Error(ex);
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="mac"></param>
-        /// <returns></returns>
-        public static byte[] Mac2Bytes(string mac)
-        {
-            mac = mac.Replace("-", "", StringComparison.Ordinal).Replace(":", "", StringComparison.Ordinal);
-            byte[] res = new byte[mac.Length / 2];
-            for (int i = 0; i < res.Length; i++)
-            {
-                res[i] = Convert.ToByte(mac.Substring(i * 2, 2), 16);
-            }
-            return res;
-        }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="mac"></param>
-        /// <returns></returns>
-        public static byte[] MagicPacket(string mac)
-        {
-            var macBytes = Mac2Bytes(mac);
-            var res = new byte[6 + 16 * macBytes.Length];
-            for (int i = 0; i < 6; i++)
-            {
-                res[i] = 0xff;
-            }
-            for (int i = 1; i <= 16; i++)
-            {
-                Array.Copy(macBytes, 0, res, i * 6, macBytes.Length);
-            }
-
-            return res;
+            //最多<<31 所以0需要单独计算
+            if (maskLength < 1) return 0;
+            return 0xffffffff << (32 - maskLength);
         }
 
 #if DISABLE_IPV6 || (!UNITY_EDITOR && ENABLE_IL2CPP && !UNITY_2018_3_OR_NEWER)

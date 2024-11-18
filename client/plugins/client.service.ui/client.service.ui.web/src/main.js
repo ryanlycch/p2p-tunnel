@@ -16,19 +16,23 @@ directives(app);
 
 import './assets/style.css'
 import './extends/index'
-import auth from './components/auth'
-app.use(auth);
+import globals from './components/globals/index'
+app.use(globals);
 
 import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/display.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 
+
+import "driver.js/dist/driver.min.css";
+
 import {
-    CircleClose, HomeFilled, Link, Position, OfficeBuilding
+    CircleCheck, CircleClose, HomeFilled, Link, Position, OfficeBuilding
     , SwitchButton, Loading, ArrowRightBold, Setting, ArrowDown
-    , DArrowLeft, DArrowRight, Edit, Delete, Promotion, Share, Select
+    , DArrowLeft, DArrowRight, Edit, Delete, Promotion, Share, Select, Warning, CirclePlus, List
 } from '@element-plus/icons'
+app.component(CircleCheck.name, CircleCheck);
 app.component(CircleClose.name, CircleClose);
 app.component(HomeFilled.name, HomeFilled);
 app.component(Link.name, Link);
@@ -46,5 +50,8 @@ app.component(Delete.name, Delete);
 app.component(Promotion.name, Promotion);
 app.component(Share.name, Share);
 app.component(Select.name, Select);
+app.component(Warning.name, Warning);
+app.component(CirclePlus.name, CirclePlus);
+app.component(List.name, List);
 
 app.use(ElementPlus, { size: 'default' }).use(router).mount('#app');

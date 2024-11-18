@@ -1,7 +1,7 @@
 ﻿using common.forward;
+using common.libs;
 using common.proxy;
-using server.messengers.singnin;
-using System;
+using server.messengers.signin;
 
 namespace server.service.forward
 {
@@ -42,7 +42,7 @@ namespace server.service.forward
             {
                 if (cacheInfo.Connection == null || cacheInfo.Connection.Connected == false)
                 {
-                    if (clientSignInCaching.Get(cacheInfo.Id, out SignInCacheInfo client))
+                    if (clientSignInCaching.Get(cacheInfo.ConnectionId, out SignInCacheInfo client))
                     {
                         cacheInfo.Connection = client.Connection;
                     }

@@ -3,7 +3,6 @@ using common.libs.extends;
 using common.proxy;
 using common.server.model;
 using System;
-using System.Linq;
 using System.Net;
 using System.Text;
 
@@ -18,12 +17,17 @@ namespace common.forward
     public class ForwardProxyPlugin : IForwardProxyPlugin
     {
         public byte Id => config.Plugin;
+        public bool ConnectEnable => config.ConnectEnable;
         public EnumBufferSize BufferSize => config.BufferSize;
-        public IPAddress UdpBind => IPAddress.Any;
+        public IPAddress BroadcastBind => IPAddress.Any;
+        public virtual HttpHeaderCacheInfo Headers { get; set; }
+        public virtual Memory<byte> HeadersBytes { get; set; }
+
+        public virtual uint Access => 0b00000000_00000000_00000000_00001000;
+        public virtual string Name => "port-forward";
+
         public Action<ushort> OnStarted { get; set; } = (port) => { };
         public Action<ushort> OnStoped { get; set; } = (port) => { };
-
-        
 
         private readonly Config config;
         private readonly IProxyServer proxyServer;
@@ -40,19 +44,28 @@ namespace common.forward
             return EnumProxyValidateDataResult.Equal;
         }
 
-        public bool HandleRequestData(ProxyInfo info)
+        public virtual bool HandleRequestData(ProxyInfo info)
         {
+            bool isMagicData = info.Step == EnumProxyStep.Command && HttpParser.GetIsCustomConnect(info.Data);
             if (info.Connection == null || info.Connection.Connected == false)
             {
                 info.Connection = null;
                 GetConnection(info);
             }
+            if (isMagicData)
+            {
+                info.Data = ProxyHelper.MagicData;
+            }
 
             if (info.Connection == null || info.Connection.Connected == false)
             {
-                info.Data = Helper.EmptyArray;
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                    Logger.Instance.Error($"【{info.ProxyPlugin.Name}】{info.RequestId} connection fail");
+                if (isMagicData == false)
+                    info.Data = Helper.EmptyArray;
+                info.CommandStatusMsg = EnumProxyCommandStatusMsg.Connection;
                 proxyServer.InputData(info);
-                return true;
+                return false;
             }
 
             info.AddressType = EnumProxyAddressType.IPV4;
@@ -67,24 +80,6 @@ namespace common.forward
             }
             return true;
         }
-        public virtual bool ValidateAccess(ProxyInfo info)
-        {
-
-#if DEBUG
-            return true;
-#else
-            if (config.PortWhiteList.Length > 0 && config.PortWhiteList.Contains(info.TargetPort) == false)
-            {
-                return false;
-            }
-            if (config.PortBlackList.Length > 0 && config.PortBlackList.Contains(info.TargetPort))
-            {
-                return false;
-            }
-            return config.ConnectEnable;
-#endif
-
-        }
 
         public void Started(ushort port)
         {
@@ -95,6 +90,8 @@ namespace common.forward
             OnStoped(port);
         }
 
+        //80443
+        private Memory<byte> port = new byte[] { 56, 48, 52, 52, 51 };
         private void GetConnection(ProxyInfo info)
         {
             ForwardAliveTypes aliveTypes = (ForwardAliveTypes)info.Rsv;
@@ -105,9 +102,23 @@ namespace common.forward
             else
             {
                 int portStart = 0;
-                string host = HttpParser.GetHost(info.Data, ref portStart).GetString();
-                forwardTargetProvider.Get(host, info);
+                Memory<byte> hostBytes = HttpParser.GetHost(info.Data, ref portStart);
+                if (portStart > 0)
+                {
+                    //80 443
+                    Span<byte> hostPort = hostBytes.Slice(portStart + 1).Span;
+                    if (hostPort.SequenceEqual(port.Span.Slice(0, 2)) || hostPort.SequenceEqual(port.Span.Slice(2)))
+                    {
+                        hostBytes = hostBytes.Slice(0, portStart);
+                    }
+                }
+                if (hostBytes.Length > 0)
+                {
+                    forwardTargetProvider.Get(hostBytes.GetString(), info);
+                }
             }
         }
+
+
     }
 }

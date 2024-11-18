@@ -1,11 +1,10 @@
 ﻿using client.messengers.clients;
-using common.libs;
-using common.libs.extends;
 using common.server;
 using common.server.servers.rudp;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace client.realize.messengers.clients
 {
@@ -15,7 +14,6 @@ namespace client.realize.messengers.clients
     public sealed class ClientInfoCaching : IClientInfoCaching
     {
         private readonly ConcurrentDictionary<ulong, ClientInfo> clients = new ConcurrentDictionary<ulong, ClientInfo>();
-        private readonly ConcurrentDictionary<string, ClientInfo> clientsByName = new ConcurrentDictionary<string, ClientInfo>();
 
         /// <summary>
         /// 下线
@@ -45,14 +43,16 @@ namespace client.realize.messengers.clients
         /// <returns></returns>
         public bool Add(ClientInfo client)
         {
-            bool result = clients.TryAdd(client.Id, client);
-            if (result)
+            if (clients.ContainsKey(client.ConnectionId))
             {
-                clientsByName.TryAdd(client.Name, client);
+                clients.AddOrUpdate(client.ConnectionId, client, (a, b) => client);
             }
-
-            OnAdd?.Invoke(client);
-            return result;
+            else
+            {
+                clients.TryAdd(client.ConnectionId, client);
+                OnAdd?.Invoke(client);
+            }
+            return true;
         }
 
         /// <summary>
@@ -65,16 +65,7 @@ namespace client.realize.messengers.clients
         {
             return clients.TryGetValue(id, out client);
         }
-        /// <summary>
-        /// 根据名字获取
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="client"></param>
-        /// <returns></returns>
-        public bool GetByName(string name, out ClientInfo client)
-        {
-            return clientsByName.TryGetValue(name, out client);
-        }
+
 
         /// <summary>
         /// 所有客户端
@@ -115,12 +106,13 @@ namespace client.realize.messengers.clients
         {
             if (clients.TryGetValue(id, out ClientInfo client))
             {
-                if (client.ConnectType != ClientConnectTypes.Unknow)
+                bool notify = client.OfflineTimes <= 1;
+                if (notify)
                 {
                     OnOffline?.Invoke(client);
                 }
                 client.Offline(offlineType);
-                if (client.ConnectType != ClientConnectTypes.Unknow)
+                if (notify)
                 {
                     OnOfflineAfter?.Invoke(client);
                 }
@@ -136,7 +128,6 @@ namespace client.realize.messengers.clients
             if (clients.TryRemove(id, out ClientInfo client))
             {
                 client.Offline();
-                clientsByName.TryRemove(client.Name, out _);
                 //udpservers.TryRemove(id, out _);
                 //tunnelPorts.TryRemove(id, out _);
                 OnRemove?.Invoke(client);
@@ -150,12 +141,12 @@ namespace client.realize.messengers.clients
         /// <param name="connection"></param>
         /// <param name="connectType"></param>
         /// <param name="onlineType"></param>
-        public void Online(ulong id, IConnection connection, ClientConnectTypes connectType, ClientOnlineTypes onlineType)
+        public void Online(ulong id, IConnection connection, ClientConnectTypes connectType)
         {
             if (clients.TryGetValue(id, out ClientInfo client))
             {
                 connection.ConnectId = id;
-                client.Online(connection, connectType, onlineType);
+                client.Online(connection, connectType);
                 OnOnline?.Invoke(client);
             }
         }
@@ -194,7 +185,7 @@ namespace client.realize.messengers.clients
         /// </summary>
         /// <param name="id"></param>
         /// <param name="server"></param>
-        public void AddUdpserver(ulong id, UdpServer server)
+        public void AddUdpserver(ulong id, IServer server)
         {
             if (clients.TryGetValue(id, out ClientInfo client))
             {
@@ -239,18 +230,17 @@ namespace client.realize.messengers.clients
         /// <summary>
         /// 清除所有
         /// </summary>
-        public void Clear()
+        public void Clear(bool empty = false)
         {
             var _clients = clients.Values;
-            foreach (var item in _clients)
+            foreach (var item in _clients.Where(c => c.Connected == false || empty).ToList())
             {
                 OnOffline?.Invoke(item);
                 item.Offline(ClientOfflineTypes.Manual);
                 OnOfflineAfter?.Invoke(item);
-                clients.TryRemove(item.Id, out _);
+                clients.TryRemove(item.ConnectionId, out _);
                 OnRemove?.Invoke(item);
             }
-            clientsByName.Clear();
         }
     }
 }

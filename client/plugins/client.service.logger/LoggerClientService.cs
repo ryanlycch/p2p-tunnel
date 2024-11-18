@@ -27,17 +27,13 @@ namespace client.service.logger
             PageParamsInfo model = arg.Content.DeJson<PageParamsInfo>();
 
             IEnumerable<LoggerModel> res = Data.OrderByDescending(c => c.Time);
-            if (model.Type >= 0)
-            {
-                res = res.Where(c => c.Type == (LoggerTypes)model.Type);
-            }
 
             return new PageInfo
             {
-                PageIndex = model.PageIndex,
+                Page = model.Page,
                 PageSize = model.PageSize,
                 Count = Data.Count(),
-                Data = res.Skip((model.PageIndex - 1) * model.PageSize).Take(model.PageSize)
+                Data = res.Skip((model.Page - 1) * model.PageSize).Take(model.PageSize)
             };
         }
 
@@ -59,15 +55,11 @@ namespace client.service.logger
         /// <summary>
         /// 当前页
         /// </summary>
-        public int PageIndex { get; set; } = 1;
+        public int Page { get; set; } = 1;
         /// <summary>
         /// 页大小
         /// </summary>
         public int PageSize { get; set; } = 10;
-        /// <summary>
-        /// 日志类型
-        /// </summary>
-        public int Type { get; set; } = -1;
     }
     /// <summary>
     /// 日志分页返回
@@ -77,7 +69,7 @@ namespace client.service.logger
         /// <summary>
         /// 当前页
         /// </summary>
-        public int PageIndex { get; set; } = 1;
+        public int Page { get; set; } = 1;
         /// <summary>
         /// 页大小
         /// </summary>

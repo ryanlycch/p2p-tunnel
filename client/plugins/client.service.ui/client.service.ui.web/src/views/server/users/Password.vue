@@ -1,5 +1,5 @@
 <template>
-    <el-dialog title="重置密码" top="1vh" destroy-on-close v-model="state.show" center :close-on-click-modal="false" width="270px">
+    <el-dialog append-to-body title="重置密码" top="1vh" destroy-on-close v-model="state.show" center :close-on-click-modal="false" width="270px">
         <el-form ref="formDom" :model="state.form" :rules="state.rules" label-width="0px">
             <el-form-item label="" prop="password">
                 <el-input v-model="state.form.password"></el-input>
@@ -14,7 +14,7 @@
 
 <script>
 import { reactive, ref } from '@vue/reactivity';
-import { add } from '../../../apis/users-server'
+import { setPassword } from '../../../apis/users-server'
 import { inject, watch } from '@vue/runtime-core';
 import { ElMessage } from 'element-plus';
 export default {
@@ -50,11 +50,11 @@ export default {
                 if (!valid) {
                     return false;
                 }
-
-                let json = JSON.parse(JSON.stringify(addData.value));
-                json.Password = state.form.password;
                 state.loading = true;
-                add(json).then((msg) => {
+                setPassword({
+                    ID: addData.value.ID,
+                    Password: state.form.password
+                }).then((msg) => {
                     state.loading = false;
                     if (!msg) {
                         ElMessage.success('操作成功');

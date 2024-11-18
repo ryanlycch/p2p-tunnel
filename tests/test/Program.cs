@@ -1,128 +1,126 @@
-﻿using System.Buffers.Binary;
+﻿using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+using common.libs.extends;
+using System.Buffers.Binary;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 
-namespace invokeSpeed
+namespace test
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static unsafe void Main(string[] args)
         {
-
-            VeaLanIPAddress ip = new VeaLanIPAddress
-            {
-                 IPAddress = BinaryPrimitives.ReadUInt32BigEndian(IPAddress.Parse("192.168.100.0").GetAddressBytes()),
-                 Mask = 21,
-            };
-            //ResetMask(ip);
-
-            uint network = GetMinNetWork(ip,out byte maskBitLength);
-            Console.WriteLine(string.Join(",", BitConverter.GetBytes(BinaryPrimitives.ReverseEndianness(network))));
-            Console.WriteLine(ip.Mask);
-            Console.WriteLine(maskBitLength);
-
-
             /*
-            VeaLanIPAddress ip = new VeaLanIPAddress
+            RectangleTest rectangleTest = new RectangleTest();
+            rectangleTest.UnionRectangles(rectangleTest.rects);
+            for (int i = 0; i < rectangleTest.rects.Length; i++)
             {
-                IPAddress = new byte[] { 192, 168, 0, 0 },
-                Mask = 25
-            };
-            uint network = GetMinNetWork(ip);
-
-            Console.WriteLine(Convert.ToString(network, 2));
-            */
-
-            //uint mask = BinaryPrimitives.ReadUInt32BigEndian(IPAddress.Parse("255.255.248.0").GetAddressBytes());
-            //Console.WriteLine(Convert.ToString(mask, 2));
-
-            /*
-            uint mask = BinaryPrimitives.ReadUInt32BigEndian(IPAddress.Parse("192.168.0.0").GetAddressBytes());
-            uint mask1 = 0xffffffff << (32 - 25) ;
-            mask &= mask1;
-
-            for (int i = 0; i <= 255; i++)
-            {
-                uint ip = BinaryPrimitives.ReadUInt32BigEndian(IPAddress.Parse($"192.168.0.{i}").GetAddressBytes());
-                if (mask == (ip & mask1))
+                if (rectangleTest.rects[i].Remove == false)
                 {
-                    Console.WriteLine($"192.168.0.{i}");
+                    Console.WriteLine($"{rectangleTest.rects[i].X},{rectangleTest.rects[i].Y},{rectangleTest.rects[i].Width},{rectangleTest.rects[i].Height}");
                 }
-
             }
             */
-            /*
-            IPAddress iPAddress = IPAddress.Parse("192.168.54.2");
-            uint ip = BinaryPrimitives.ReadUInt32BigEndian(iPAddress.GetAddressBytes());
-            Console.WriteLine(Convert.ToString(ip,2));
-            Console.WriteLine(new IPAddress(BitConverter.GetBytes(ip)).ToString());
-            */
+            BenchmarkRunner.Run<Test>();
+        }
+    }
 
-            /*
-            var udp = new UdpClient(new IPEndPoint(IPAddress.Parse("192.168.1.3"),5000));
-            udp.Client.EnableBroadcast = true;
+    [MemoryDiagnoser]
+    public unsafe partial class Test
+    {
+        [GlobalSetup]
+        public void Startup()
+        {
+        }
 
-            for (int i = 0; i < 10; i++)
-            {
-                udp.Send(Encoding.UTF8.GetBytes(i.ToString()),new IPEndPoint(IPAddress.Parse("225.0.0.1"),6000));
-            }
-            */
+        RectangleTest rectangleTest = new RectangleTest();
 
-            Console.ReadLine();
+        [Benchmark]
+        public void Test1()
+        {
+            rectangleTest.UnionRectangles(rectangleTest.rects);
         }
 
 
-        static void ResetMask(VeaLanIPAddress ip)
+    }
+
+    public class RectangleTest
+    {
+       public Rectangle[] rects = new Rectangle[] {
+             new Rectangle(0,100,100,100),
+            new Rectangle(50,50,100,300),
+            new Rectangle(300,200,100,200),
+
+            new Rectangle(380,300,100,100),
+        };
+
+        public void UnionRectangles(Rectangle[] rects)
         {
-            if (ip.Mask == 0)
+            for (int i = 0; i < rects.Length; i++)
             {
-                ip.Mask = 32;
-                for (int i = 0; i < sizeof(uint); i++)
+                if (rects[i].Remove) continue;
+                for (int j = i+1; j < rects.Length; j++)
                 {
-                    if (((ip.IPAddress >> (i * 8)) & 0x000000ff) != 0)
+                    if (rects[j].Remove) continue;
+                    if (rects[i].IntersectsWith( rects[j]))
                     {
-                        break;
+                        rects[i] = rects[i].Union(rects[j]);
+                        rects[j].Remove = true;
                     }
-                    ip.Mask -= 8;
                 }
             }
         }
+    }
 
-        static uint GetMinNetWork(VeaLanIPAddress ip, out byte maskBitLength)
+
+    public partial struct Rectangle
+    {
+        public Rectangle(int x, int y, int width, int height)
         {
-            uint mask = 0xffffff00;
-            maskBitLength = 24;
-            for (int i = 1; i < sizeof(uint); i++)
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+        }
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+
+        public bool Remove { get; set; }
+
+        public readonly bool IntersectsWith(Rectangle rect) =>
+            (rect.X < X + Width) && (X < rect.X + rect.Width) &&
+            (rect.Y < Y + Height) && (Y < rect.Y + rect.Height);
+
+        public readonly Rectangle Union(Rectangle b)
+        {
+            Rectangle a = this;
+            int x1 = Math.Min(a.X, b.X);
+            int x2 = Math.Max(a.X + a.Width, b.X + b.Width);
+            int y1 = Math.Min(a.Y, b.Y);
+            int y2 = Math.Max(a.Y + a.Height, b.Y + b.Height);
+
+            return new Rectangle(x1, y1, x2 - x1, y2 - y1);
+        }
+
+        public static Rectangle[] UnionRectangles(Rectangle[] rects)
+        {
+            for (int i = 0; i < rects.Length; i++)
             {
-                if (((ip.IPAddress >> (i * 8)) & 0x000000ff) == 0 || maskBitLength > ip.Mask)
+                if (rects[i].Remove) continue;
+                for (int j = i + 1; j < rects.Length; j++)
                 {
-                    mask <<= 8;
-                    maskBitLength -= 8;
+                    if (rects[j].Remove) continue;
+                    if (rects[i].IntersectsWith(rects[j]))
+                    {
+                        rects[i] = rects[i].Union(rects[j]);
+                        rects[j].Remove = true;
+                    }
                 }
-                else break;
             }
-            return ip.IPAddress & mask;
+            return rects;
         }
     }
-
-    public sealed class VeaLanIPAddress
-    {
-        public uint IPAddress { get; set; }
-        public byte Mask { get; set; }
-    }
-
-    public sealed class IPAddressInfo
-    {
-        /// <summary>
-        /// ip 小端
-        /// </summary>
-        public uint IP { get; set; }
-        /// <summary>
-        /// 局域网网段
-        /// </summary>
-        public VeaLanIPAddress[] LanIPs { get; set; }
-    }
-
-
 }

@@ -1,9 +1,7 @@
 ﻿using common.libs;
 using common.proxy;
 using common.server;
-using common.socks5;
 using Microsoft.Extensions.DependencyInjection;
-using server.service.socks5;
 using System.Reflection;
 
 namespace client.service.socks5
@@ -18,7 +16,7 @@ namespace client.service.socks5
            
 
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
-            Logger.Instance.Debug($"socks5已加载");
+            Logger.Instance.Debug($"socks5已加载，插件id:{config.Plugin}");
             if (config.ListenEnable)
             {
                 services.GetService<IProxyServer>().Start((ushort)config.ListenPort, config.Plugin);

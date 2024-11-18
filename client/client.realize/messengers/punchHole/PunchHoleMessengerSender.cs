@@ -1,5 +1,5 @@
 ﻿using client.messengers.punchHole;
-using client.messengers.singnin;
+using client.messengers.signin;
 using common.libs;
 using Microsoft.Extensions.DependencyInjection;
 using common.server;
@@ -150,7 +150,7 @@ namespace client.realize.messengers.punchHole
             await Request(new SendPunchHoleArg<PunchHoleReverseInfo>
             {
                 Connection = signInState.Connection,
-                ToId = info.Id,
+                ToId = info.ConnectionId,
                 Data = new PunchHoleReverseInfo { Value = times }
             }).ConfigureAwait(false);
         }

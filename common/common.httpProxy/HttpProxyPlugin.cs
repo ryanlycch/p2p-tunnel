@@ -13,10 +13,15 @@ namespace common.httpProxy
     public class HttpProxyPlugin : IHttpProxyPlugin
     {
         public virtual byte Id => config.Plugin;
+        public virtual bool ConnectEnable => config.ConnectEnable;
         public virtual EnumBufferSize BufferSize => config.BufferSize;
-        public IPAddress UdpBind => IPAddress.Any;
-        public virtual ushort Port => config.ListenPort;
-        public virtual bool Enable => config.ListenEnable;
+        public IPAddress BroadcastBind => IPAddress.Any;
+        public virtual HttpHeaderCacheInfo Headers { get; set; }
+        public virtual Memory<byte> HeadersBytes { get; set; }
+
+        public virtual uint Access => 0b00000000_00000000_00000000_00100000;
+        public virtual string Name => "http-proxy";
+
 
         private readonly Config config;
         public HttpProxyPlugin(Config config)
@@ -33,22 +38,11 @@ namespace common.httpProxy
             return true;
         }
 
-        public virtual bool ValidateAccess(ProxyInfo info)
-        {
-#if DEBUG
-            return true;
-#else
-            return Enable;
-#endif
-        }
-
         public virtual bool HandleAnswerData(ProxyInfo info)
         {
             if (info.Step == EnumProxyStep.Command)
             {
-                EnumProxyCommandStatus enumProxyCommandStatus = (EnumProxyCommandStatus)info.Data.Span[0];
-
-                if (enumProxyCommandStatus == EnumProxyCommandStatus.ConnecSuccess)
+                if (info.CommandStatus == EnumProxyCommandStatus.ConnecSuccess)
                 {
                     info.Data = HttpParser.ConnectSuccessMessage();
                 }

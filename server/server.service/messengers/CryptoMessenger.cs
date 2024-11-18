@@ -2,7 +2,7 @@
 using common.libs.extends;
 using common.server;
 using common.server.model;
-using server.messengers.singnin;
+using server.messengers.signin;
 using System.Text;
 
 namespace server.service.messengers
@@ -58,7 +58,8 @@ namespace server.service.messengers
         [MessengerId((ushort)CryptoMessengerIds.Test)]
         public void Test(IConnection connection)
         {
-            Logger.Instance.DebugDebug($"encoder test : {connection.Crypto.Decode(connection.ReceiveRequestWrap.Payload).Span.GetString()}");
+            if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                Logger.Instance.Debug($"encoder test : {connection.Crypto.Decode(connection.ReceiveRequestWrap.Payload).Span.GetString()}");
             connection.Write(Helper.TrueArray);
         }
 

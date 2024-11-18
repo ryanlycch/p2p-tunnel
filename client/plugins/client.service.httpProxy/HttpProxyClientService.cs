@@ -1,4 +1,6 @@
 ﻿using client.service.ui.api.clientServer;
+using common.proxy;
+using System.Threading.Tasks;
 
 namespace client.service.httpProxy
 {
@@ -12,10 +14,9 @@ namespace client.service.httpProxy
         {
             this.httpProxyTransfer = httpProxyTransfer;
         }
-        public bool Update(ClientServiceParamsInfo arg)
+        public bool Run(ClientServiceParamsInfo arg)
         {
-            httpProxyTransfer.Update();
-            return true;
+            return httpProxyTransfer.Update();
         }
 
         public string GetPac(ClientServiceParamsInfo arg)
@@ -26,6 +27,11 @@ namespace client.service.httpProxy
         public string SetPac(ClientServiceParamsInfo arg)
         {
             return httpProxyTransfer.UpdatePac(arg.Content);
+        }
+
+        public async Task<EnumProxyCommandStatusMsg> Test(ClientServiceParamsInfo arg)
+        {
+            return await httpProxyTransfer.Test();
         }
     }
 }

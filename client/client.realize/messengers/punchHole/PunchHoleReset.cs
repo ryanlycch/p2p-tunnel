@@ -1,5 +1,5 @@
 ﻿using client.messengers.punchHole;
-using client.messengers.singnin;
+using client.messengers.signin;
 using common.server;
 using common.server.model;
 using System.Threading.Tasks;
@@ -20,7 +20,7 @@ namespace client.realize.messengers.punchHole
         public PunchHoleTypes Type => PunchHoleTypes.RESET;
         public async Task Execute(IConnection connection, PunchHoleRequestInfo info)
         {
-            _ = signinTransfer.SignIn(true);
+            _ = signinTransfer.SignIn();
             await Task.CompletedTask;
         }
     }

@@ -17,23 +17,16 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         dotnet-version: 7.0.x
-
-    - name: setup dotnet6
-      uses: actions/setup-dotnet@v2
-      env:
-          GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
-      with:
-        dotnet-version: 6.0.x
-
-    - name: install dotnet maui
-      run: 
-        dotnet workload install maui
+        
+    #- name: install dotnet maui
+    #  run: 
+    #    dotnet workload install maui
 
     - name: restore
       run: 
         dotnet restore ./client/client.service &&
-        dotnet restore ./client/client.service.app &&
         dotnet restore ./server/server.service
+        #dotnet restore ./client/client.service.app
         
     - name: publish projects
       run: ./publish.bat "C:\\Android\\android-sdk"
@@ -48,8 +41,8 @@ jobs:
       env:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
-        tag_name: v2.1.0.0-beta
-        release_name: v2.1.0.0-beta.${{ steps.date.outputs.today }}
+        tag_name: v2.1.0.1-beta
+        release_name: v2.1.0.1-beta.${{ steps.date.outputs.today }}
         draft: false
         prerelease: false
         
@@ -60,8 +53,8 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/any.zip
-        asset_name: any.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-any.zip
+        asset_name: p2p-tunnel-any.zip
         asset_content_type: application/zip
     
     - name: upload win x64 single
@@ -71,8 +64,8 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/win-x64-single.zip
-        asset_name: win-x64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-win-x64-single.zip
+        asset_name: p2p-tunnel-win-x64-single.zip
         asset_content_type: application/zip
     
     - name: upload win arm64 single
@@ -82,8 +75,8 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/win-arm64-single.zip
-        asset_name: win-arm64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-win-arm64-single.zip
+        asset_name: p2p-tunnel-win-arm64-single.zip
         asset_content_type: application/zip
 
     - name: upload linux x64 single
@@ -93,8 +86,8 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/linux-x64-single.zip
-        asset_name: linux-x64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-linux-x64-single.zip
+        asset_name: p2p-tunnel-linux-x64-single.zip
         asset_content_type: application/zip
     
     - name: upload linux arm64 single
@@ -104,21 +97,10 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/linux-arm64-single.zip
-        asset_name: linux-arm64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-linux-arm64-single.zip
+        asset_name: p2p-tunnel-linux-arm64-single.zip
         asset_content_type: application/zip
-
-    - name: upload linux arm single
-      id: upload-linux-arm
-      uses: actions/upload-release-asset@master
-      env:
-          GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/linux-arm-single.zip
-        asset_name: linux-arm-single.zip
-        asset_content_type: application/zip
-    
+        
     - name: upload osx x64 single
       id: upload-osx-x64
       uses: actions/upload-release-asset@master
@@ -126,8 +108,8 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/osx-x64-single.zip
-        asset_name: osx-x64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-osx-x64-single.zip
+        asset_name: p2p-tunnel-osx-x64-single.zip
         asset_content_type: application/zip
     
     - name: upload osx arm64 single
@@ -137,18 +119,18 @@ jobs:
           GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/osx-arm64-single.zip
-        asset_name: osx-arm64-single.zip
+        asset_path: ./public/publish-zip/p2p-tunnel-osx-arm64-single.zip
+        asset_name: p2p-tunnel-osx-arm64-single.zip
         asset_content_type: application/zip
 
-    - name: upload apk
-      id: upload-apk
-      uses: actions/upload-release-asset@master
-      env:
-          GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./public/publish-zip/p2p-tunnel.apk
-        asset_name: p2p-tunnel.apk
-        asset_content_type: application/vnd.android.package-archive
+    #- name: upload apk
+    #  id: upload-apk
+    #  uses: actions/upload-release-asset@master
+    #  env:
+    #      GITHUB_TOKEN: '${{ secrets.ACTIONS_TOKEN }}'
+    #  with:
+    #    upload_url: ${{ steps.create_release.outputs.upload_url }}
+    #    asset_path: ./public/publish-zip/p2p-tunnel.apk
+    #    asset_name: p2p-tunnel.apk
+    #    asset_content_type: application/vnd.android.package-archive
         

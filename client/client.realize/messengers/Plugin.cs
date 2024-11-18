@@ -2,19 +2,18 @@
 using client.messengers.punchHole;
 using client.messengers.punchHole.tcp;
 using client.messengers.punchHole.udp;
-using client.messengers.singnin;
+using client.messengers.signin;
 using client.realize.messengers.clients;
 using client.realize.messengers.crypto;
 using client.realize.messengers.heart;
 using client.realize.messengers.punchHole;
 using client.realize.messengers.punchHole.tcp.nutssb;
 using client.realize.messengers.punchHole.udp;
-using client.realize.messengers.singnin;
+using client.realize.messengers.signin;
 using common.libs;
 using Microsoft.Extensions.DependencyInjection;
 using common.server;
 using System;
-using System.Linq;
 using System.Reflection;
 using common.libs.database;
 using common.server.servers.rudp;
@@ -37,6 +36,9 @@ namespace client.realize.messengers
             messengerResolver.LoadMessenger(assemblys);
             //加载所有的打洞消息处理器
             services.GetService<PunchHoleMessengerSender>().LoadPlugins(assemblys);
+
+            ProxyPluginValidatorHandler proxyPluginValidatorHandler = services.GetService<ProxyPluginValidatorHandler>();
+            proxyPluginValidatorHandler.LoadValidator(assemblys);
         }
 
         public void LoadBefore(ServiceCollection services, Assembly[] assemblys)
@@ -48,9 +50,10 @@ namespace client.realize.messengers
             services.AddSingleton<IRelaySourceConnectionSelector, relay.RelaySourceConnectionSelector>();
             services.AddSingleton<IRelayValidator, RelayValidator>();
             services.AddSingleton<IClientConnectsCaching, ClientConnectsCaching>();
-            
+
 
             services.AddSingleton<IIPv6AddressRequest, IPv6AddressRequest>();
+            services.AddSingleton<IServiceAccessValidator, clients.ServiceAccessValidator>();
 
             //监听服务
             services.AddSingleton<ITcpServer, TcpServer>();
@@ -74,7 +77,6 @@ namespace client.realize.messengers
 
             //打洞
             services.AddSingleton<PunchHoleMessengerSender>();
-            //services.AddSingleton<IPunchHoleUdp, PunchHoleUdpMessengerSender>();
             services.AddSingleton<IPunchHoleUdp, PunchHoleRUdpMessengerSender>();
             services.AddSingleton<IPunchHoleTcp, PunchHoleTcpNutssBMessengerSender>();
 
@@ -91,9 +93,15 @@ namespace client.realize.messengers
 
 
             //代理
+            services.AddSingleton<common.proxy.Config>();
             services.AddSingleton<IProxyMessengerSender, ProxyMessengerSender>();
             services.AddSingleton<IProxyClient, ProxyClient>();
             services.AddSingleton<IProxyServer, ProxyServer>();
+            services.AddSingleton<ProxyPluginValidatorHandler>();
+            foreach (Type item in ReflectionHelper.GetInterfaceSchieves(assemblys, typeof(IProxyPluginValidator)))
+            {
+                services.AddSingleton(item);
+            }
 
 
             //注入所有的消息处理器
@@ -108,5 +116,7 @@ namespace client.realize.messengers
                 services.AddSingleton(item);
             }
         }
+
+
     }
 }

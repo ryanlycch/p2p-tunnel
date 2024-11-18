@@ -1,39 +1,29 @@
-﻿using server.messengers;
-using common.server;
-using server.messengers.singnin;
+﻿using common.server;
+using server.messengers.signin;
 using common.server.model;
 using System.Collections.Generic;
 
 namespace server.service.validators
 {
-    public sealed class RelayValidator : IRelayValidator, ISignInValidator
+    public sealed class RelayValidator : IRelayValidator, ISignInValidator, IAccess
     {
 
         private readonly Config config;
         private readonly IServiceAccessValidator serviceAccessProvider;
-        private readonly IClientSignInCaching clientSignInCache;
 
         public EnumSignInValidatorOrder Order => EnumSignInValidatorOrder.Level9;
 
         public uint Access => (uint)EnumServiceAccess.Relay;
+        public string Name => "relay";
 
-        public string Name => "中继";
-
-        public RelayValidator(Config config, IServiceAccessValidator serviceAccessProvider, IClientSignInCaching clientSignInCache)
+        public RelayValidator(Config config, IServiceAccessValidator serviceAccessProvider)
         {
             this.config = config;
             this.serviceAccessProvider = serviceAccessProvider;
-            this.clientSignInCache = clientSignInCache;
         }
         public bool Validate(IConnection connection)
         {
-            if (clientSignInCache.Get(connection.ConnectId, out SignInCacheInfo source))
-            {
-                return config.RelayEnable || serviceAccessProvider.Validate(source, Access);
-            }
-
-            return false;
-
+            return config.RelayEnable || serviceAccessProvider.Validate(connection.ConnectId, Access);
         }
 
         public SignInResultInfo.SignInResultInfoCodes Validate(Dictionary<string, string> args, ref uint access)
@@ -49,17 +39,12 @@ namespace server.service.validators
     }
 
 
-    public sealed class SettingValidator : ISignInValidator
+    public sealed class SettingValidator : ISignInValidator, IAccess
     {
         public EnumSignInValidatorOrder Order => EnumSignInValidatorOrder.Level9;
         public uint Access => (uint)EnumServiceAccess.Setting;
 
-        public string Name => "服务器配置";
-
-        public SettingValidator()
-        {
-
-        }
+        public string Name => "setting";
 
         public SignInResultInfo.SignInResultInfoCodes Validate(Dictionary<string, string> args, ref uint access)
         {
@@ -68,7 +53,6 @@ namespace server.service.validators
 
         public void Validated(SignInCacheInfo cache)
         {
-
         }
     }
 }

@@ -1,5 +1,4 @@
-﻿using common.httpProxy;
-using common.libs;
+﻿using common.libs;
 using common.proxy;
 using common.server;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +19,7 @@ namespace client.service.httpProxy
            
 
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
-            Logger.Instance.Debug($"http代理已加载");
+            Logger.Instance.Debug($"http代理已加载，插件id:{config.Plugin}");
             if (config.ListenEnable)
             {
                 httpProxyTransfer.Update();

@@ -1,18 +1,18 @@
 ﻿using client.messengers.clients;
-using client.messengers.singnin;
+using client.messengers.signin;
+using client.service.vea.platforms;
 using common.libs;
 using common.libs.extends;
 using common.proxy;
-using common.server;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
+using System.Net.Sockets;
+using System.Threading.Tasks;
 
 namespace client.service.vea
 {
@@ -21,31 +21,29 @@ namespace client.service.vea
     /// </summary>
     public sealed class VeaTransfer
     {
-        Process Tun2SocksProcess;
-        int interfaceNumber = 0;
-        string interfaceLinux = string.Empty;
-        string interfaceOsx = string.Empty;
-        const string veaName = "p2p-tunnel";
-        const string veaNameOsx = "utun12138";
-
         private readonly ConcurrentDictionary<uint, IPAddressCacheInfo> ips = new ConcurrentDictionary<uint, IPAddressCacheInfo>();
         private readonly ConcurrentDictionary<uint, IPAddressCacheInfo> lanips = new ConcurrentDictionary<uint, IPAddressCacheInfo>();
+        private readonly ConcurrentDictionary<ulong, VeaLanIPAddressOnLine> onlines = new ConcurrentDictionary<ulong, VeaLanIPAddressOnLine>();
+
         public ConcurrentDictionary<uint, IPAddressCacheInfo> IPList => ips;
         public ConcurrentDictionary<uint, IPAddressCacheInfo> LanIPList => lanips;
+        public ConcurrentDictionary<ulong, VeaLanIPAddressOnLine> Onlines => onlines;
 
         private readonly Config config;
         private readonly IClientInfoCaching clientInfoCaching;
         private readonly VeaMessengerSender veaMessengerSender;
         private readonly SignInStateInfo signInStateInfo;
         private readonly IProxyServer proxyServer;
+        private readonly IVeaPlatform veaPlatform;
 
-        public VeaTransfer(Config config, IClientInfoCaching clientInfoCaching, VeaMessengerSender veaMessengerSender, SignInStateInfo signInStateInfo, IProxyServer proxyServer)
+        public VeaTransfer(Config config, IClientInfoCaching clientInfoCaching, VeaMessengerSender veaMessengerSender, SignInStateInfo signInStateInfo, IProxyServer proxyServer, IVeaPlatform veaPlatform)
         {
             this.config = config;
             this.clientInfoCaching = clientInfoCaching;
             this.veaMessengerSender = veaMessengerSender;
             this.signInStateInfo = signInStateInfo;
             this.proxyServer = proxyServer;
+            this.veaPlatform = veaPlatform;
 
             clientInfoCaching.OnOnline += (client) =>
             {
@@ -53,89 +51,176 @@ namespace client.service.vea
             };
             clientInfoCaching.OnOffline += (client) =>
             {
-                var value = ips.FirstOrDefault(c => c.Value.Client.Id == client.Id);
-                if (value.Key != 0)
+                var value = ips.FirstOrDefault(c => c.Value.Client.ConnectionId == client.ConnectionId);
+                if (value.Key != 0 && ips.TryRemove(value.Key, out IPAddressCacheInfo cache))
                 {
-                    if (ips.TryRemove(value.Key, out IPAddressCacheInfo cache))
+                    RemoveLanMasks(cache.LanIPs);
+                }
+            };
+            signInStateInfo.OnChange += (state) =>
+            {
+                if (state)
+                {
+                    Task.Run(async () =>
                     {
-                        RemoveLanMasks(cache.LanIPs);
-                    }
+                        await Run();
+                    });
                 }
             };
 
-            AppDomain.CurrentDomain.ProcessExit += (object sender, EventArgs e) => Stop();
+            AppDomain.CurrentDomain.ProcessExit += (sender, e) => Stop();
+            Console.CancelKeyPress += (sender, e) => Stop();
         }
-
         /// <summary>
-        /// 收到通知
+        /// 收到某个客户端的ip信息
         /// </summary>
-        /// <param name="connection"></param>
-        public void OnNotify(IConnection connection)
+        /// <param name="connectionid"></param>
+        /// <param name="ips"></param>
+        public void OnIPs(ulong connectionid, IPAddressInfo ips)
         {
-            if (connection.FromConnection != null)
+            if (clientInfoCaching.Get(connectionid, out ClientInfo client))
             {
-                bool res = clientInfoCaching.Get(connection.FromConnection.ConnectId, out ClientInfo client);
-                if (res)
-                {
-                    IPAddressInfo ips = new IPAddressInfo();
-                    ips.DeBytes(connection.ReceiveRequestWrap.Payload);
-                    UpdateIp(client, ips);
-                }
+                UpdateIp(client, ips);
             }
 
         }
-        private void UpdateIp(ClientInfo client, IPAddressInfo _ips)
+        /// <summary>
+        /// 收到某个客户端的在线设备信息
+        /// </summary>
+        /// <param name="connectionid"></param>
+        /// <param name="online"></param>
+        public void OnOnline(ulong connectionid, VeaLanIPAddressOnLine online)
         {
-            if (client == null || _ips == null) return;
-
-            lock (this)
-            {
-                ResetMask(_ips);
-                var cache = ips.Values.FirstOrDefault(c => c.Client.Id == client.Id);
-                if (cache != null)
-                {
-                    ips.TryRemove(cache.IP, out _);
-                    RemoveLanMasks(cache.LanIPs);
-                }
-
-                cache = new IPAddressCacheInfo { Client = client, IP = _ips.IP, LanIPs = _ips.LanIPs, Mask = 32 };
-                ips.AddOrUpdate(_ips.IP, cache, (a, b) => cache);
-                AddLanMasks(_ips, client);
-
-                AddRoute();
-            }
+            onlines.AddOrUpdate(connectionid, online, (a, b) => online);
         }
+        public async Task<EnumProxyCommandStatusMsg> Test(string host, int port)
+        {
+            if (config.ListenEnable == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+            if (ProxyPluginLoader.GetPlugin(config.Plugin, out IProxyPlugin plugin) == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+
+            if (IPAddress.TryParse(host, out IPAddress ip) == false)
+            {
+                ip = Dns.GetHostEntry(host).AddressList[0];
+            }
+            if (ip.Equals(IPAddress.Any)) ip = IPAddress.Loopback;
+
+            byte[] ips = ip.GetAddressBytes();
+            byte[] ports = BitConverter.GetBytes(port);
+            IPEndPoint target = new IPEndPoint(IPAddress.Loopback, config.ListenPort);
+            try
+            {
+                using Socket socket = new Socket(target.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(target);
+
+                byte[] bytes = new byte[ProxyHelper.MagicData.Length];
+                //request
+                await socket.SendAsync(new byte[] { 0x05, 0x01, 0 }, SocketFlags.None);
+                await socket.ReceiveAsync(bytes, SocketFlags.None);
+                //command
+                byte[] socks5Data = new byte[] { 0x05, 0x01, 0, 0x01, ips[0], ips[1], ips[2], ips[3], ports[1], ports[0] };
+                byte[] data = new byte[bytes.Length + socks5Data.Length];
+                socks5Data.AsSpan().CopyTo(data);
+                ProxyHelper.MagicData.AsSpan().CopyTo(data.AsSpan(socks5Data.Length));
+                await socket.SendAsync(data, SocketFlags.None);
+
+                int length = await socket.ReceiveAsync(bytes, SocketFlags.None);
+
+                EnumProxyCommandStatusMsg statusMsg = EnumProxyCommandStatusMsg.Listen;
+                if (length > 0)
+                {
+                    statusMsg = (EnumProxyCommandStatusMsg)bytes[0];
+                }
+                return statusMsg;
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error(ex);
+            }
+            return EnumProxyCommandStatusMsg.Listen;
+        }
+
         /// <summary>
         /// 更新ip
         /// </summary>
         public void UpdateIp()
         {
-            foreach (var item in clientInfoCaching.All().Where(c => c.Id != signInStateInfo.ConnectId))
+            foreach (var item in clientInfoCaching.All().Where(c => c.ConnectionId != signInStateInfo.ConnectId))
             {
                 var connection = item.Connection;
                 var client = item;
                 if (connection != null)
                 {
-                    veaMessengerSender.IP(connection).ContinueWith((result) =>
+                    veaMessengerSender.UpdateIp(connection).ContinueWith((result) =>
                     {
                         UpdateIp(client, result.Result);
                     });
                 }
             }
         }
+        private void UpdateIp(ClientInfo client, IPAddressInfo _ips)
+        {
+            if (client == null || _ips == null) return;
+
+
+
+            lock (this)
+            {
+                var cache = ips.Values.FirstOrDefault(c => c.Client.ConnectionId == client.ConnectionId);
+                if (cache != null)
+                {
+                    ips.TryRemove(cache.IP, out _);
+                    RemoveLanMasks(cache.LanIPs);
+                }
+
+                cache = new IPAddressCacheInfo { Client = client, IP = _ips.IP, LanIPs = _ips.LanIPs, MaskLength = 32, MaskValue = 0xffffffff };
+                ips.AddOrUpdate(_ips.IP, cache, (a, b) => cache);
+                AddLanMasks(_ips, client);
+
+                AddRoute();
+            }
+        }
 
         /// <summary>
         /// 开启
         /// </summary>
-        public void Run()
+        public async Task<bool> Run()
         {
+            bool res = true;
             Stop();
+
+            byte oldIP = (byte)(BinaryPrimitives.ReadUInt32BigEndian(config.IP.GetAddressBytes()) & 0xff);
+            Logger.Instance.Info($"【{signInStateInfo.Connection?.ConnectId ?? 0}】开始从服务器分配组网IP，本地ip:{oldIP}");
+            uint ip = await veaMessengerSender.AssignIP(signInStateInfo.Connection, oldIP);
+            if (ip > 0)
+            {
+                Logger.Instance.Info($"【{signInStateInfo.Connection?.ConnectId ?? 0}】从服务器分配到组网IP:{ip & 0x000000ff}");
+                config.IP = new IPAddress(BinaryPrimitives.ReverseEndianness(ip).ToBytes());
+                await config.SaveConfig();
+            }
+            else
+            {
+                Logger.Instance.Warning($"未能从服务器分配到组网IP，将使用ip:{oldIP}");
+            }
+
             if (config.ListenEnable)
             {
-                RunTun2Socks();
-                proxyServer.Start((ushort)config.ListenPort, config.Plugin); ;
+                res = veaPlatform.Run();
+                if (res)
+                {
+                    if (proxyServer.Start((ushort)config.ListenPort, config.Plugin) == false)
+                    {
+                        Stop();
+                    }
+                }
             }
             UpdateIp();
+            return res;
         }
         /// <summary>
         /// 停止
@@ -143,219 +228,7 @@ namespace client.service.vea
         public void Stop()
         {
             proxyServer.Stop(config.Plugin);
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                KillWindows();
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                KillLinux();
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                KillOsx();
-            }
-        }
-
-        private void RunTun2Socks()
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                WindowsIdentity id = WindowsIdentity.GetCurrent();
-                WindowsPrincipal principal = new WindowsPrincipal(id);
-                if (principal.IsInRole(WindowsBuiltInRole.Administrator))
-                {
-                    RunWindows();
-                }
-                else
-                {
-                    throw new Exception($"需要管理员权限");
-                }
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                RunLinux();
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                RunOsx();
-            }
-        }
-
-        private void KillWindows()
-        {
-            interfaceNumber = 0;
-            if (Tun2SocksProcess != null)
-            {
-                Tun2SocksProcess.Kill();
-                Tun2SocksProcess.Close();
-                Tun2SocksProcess.Dispose();
-                Tun2SocksProcess = null;
-            }
-            foreach (var item in Process.GetProcesses().Where(c => c.ProcessName.Contains("tun2socks")))
-            {
-                item.Kill();
-                item.Close();
-                item.Dispose();
-            };
-        }
-        private void KillLinux()
-        {
-            if (Tun2SocksProcess != null)
-            {
-                Tun2SocksProcess.Kill();
-                Tun2SocksProcess.Close();
-                Tun2SocksProcess.Dispose();
-                Tun2SocksProcess = null;
-            }
-
-            Command.Linux(string.Empty, new string[] { $"ip tuntap del mode tun dev {veaName}" });
-        }
-        private void KillOsx()
-        {
-            if (Tun2SocksProcess != null)
-            {
-                Tun2SocksProcess.Kill();
-                Tun2SocksProcess.Close();
-                Tun2SocksProcess.Dispose();
-                Tun2SocksProcess = null;
-            }
-            var ip = config.IP.GetAddressBytes();
-            ip[^1] = 0;
-            Command.Osx(string.Empty, new string[] { $"route delete -net {new IPAddress(ip)}/24 {config.IP}" });
-        }
-
-        private void RunWindows()
-        {
-            //return;
-            for (int i = 0; i < 10; i++)
-            {
-                Tun2SocksProcess = Command.Execute("tun2socks-windows.exe", $" -device {veaName} -proxy socks5://127.0.0.1:{config.ListenPort} -loglevel silent");
-                for (int k = 0; k < 4; k++)
-                {
-                    System.Threading.Thread.Sleep(1000);
-                    if (GetWindowsHasInterface(veaName))
-                    {
-                        interfaceNumber = GetWindowsInterfaceNum();
-                        if (interfaceNumber > 0)
-                        {
-                            Command.Windows(string.Empty, new string[] { $"netsh interface ip set address name=\"{veaName}\" source=static addr={config.IP} mask=255.255.255.0 gateway=none" });
-                            System.Threading.Thread.Sleep(100);
-                            if (GetWindowsHasIp(config.IP))
-                            {
-                                AddRoute();
-                                if (config.ProxyAll) //代理所有
-                                {
-                                    //AddRoute(IPAddress.Any);
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-                KillWindows();
-            }
-        }
-        private int GetWindowsInterfaceNum()
-        {
-            string output = Command.Windows(string.Empty, new string[] { "route print" });
-            foreach (var item in output.Split(Environment.NewLine))
-            {
-                if (item.Contains("WireGuard Tunnel"))
-                {
-                    return int.Parse(item.Substring(0, item.IndexOf('.')).Trim());
-                }
-            }
-            return 0;
-        }
-        private bool GetWindowsHasInterface(string name)
-        {
-            string output = Command.Windows(string.Empty, new string[] { $"ipconfig | findstr \"{name}\"" });
-            return string.IsNullOrWhiteSpace(output) == false;
-        }
-        private bool GetWindowsHasIp(IPAddress ip)
-        {
-            string output = Command.Windows(string.Empty, new string[] { $"ipconfig | findstr \"{ip}\"" });
-            return string.IsNullOrWhiteSpace(output) == false;
-        }
-        private void RunLinux()
-        {
-            Command.Linux(string.Empty, new string[] {
-                $"ip tuntap add mode tun dev {veaName}",
-                $"ip addr add {config.IP}/24 dev {veaName}",
-                $"ip link set dev {veaName} up"
-            });
-            interfaceLinux = GetLinuxInterfaceNum();
-            Tun2SocksProcess = Command.Execute("./tun2socks-linux", $" -device {veaName} -proxy socks5://127.0.0.1:{config.ListenPort} -interface {interfaceLinux} -loglevel silent");
-
-            AddRoute();
-        }
-        private string GetLinuxInterfaceNum()
-        {
-            string output = Command.Linux(string.Empty, new string[] { "ip route" });
-            foreach (var item in output.Split(Environment.NewLine))
-            {
-                if (item.StartsWith("default via"))
-                {
-                    var strs = item.Split(' ');
-                    for (int i = 0; i < strs.Length; i++)
-                    {
-                        if (strs[i] == "dev")
-                        {
-                            return strs[i + 1];
-                        }
-                    }
-                }
-            }
-            return string.Empty;
-        }
-        private void RunOsx()
-        {
-            interfaceOsx = GetOsxInterfaceNum();
-            Tun2SocksProcess = Command.Execute("./tun2socks-osx", $" -device {veaNameOsx} -proxy socks5://127.0.0.1:{config.ListenPort} -interface {interfaceOsx} -loglevel silent");
-
-            for (int i = 0; i < 60; i++)
-            {
-                string output = Command.Osx(string.Empty, new string[] { "ifconfig" });
-                if (output.Contains(veaNameOsx))
-                {
-                    break;
-                }
-                else
-                {
-                    System.Threading.Thread.Sleep(1000);
-                }
-            }
-
-            Command.Osx(string.Empty, new string[] { $"ifconfig {veaNameOsx} {config.IP} {config.IP} up" });
-
-            var ip = config.IP.GetAddressBytes();
-            ip[^1] = 0;
-            Command.Osx(string.Empty, new string[] { $"route add -net {new IPAddress(ip)}/24 {config.IP}" });
-
-            AddRoute();
-        }
-        private string GetOsxInterfaceNum()
-        {
-            string output = Command.Osx(string.Empty, new string[] { "ifconfig" });
-            var arr = output.Split(Environment.NewLine);
-            for (int i = 0; i < arr.Length; i++)
-            {
-                var item = arr[i];
-                if (item.Contains("inet "))
-                {
-                    for (int k = i; k >= 0; k--)
-                    {
-                        var itemk = arr[k];
-                        if (itemk.Contains("flags=") && itemk.StartsWith("en"))
-                        {
-                            return itemk.Split(": ")[0];
-                        }
-                    }
-                }
-
-            }
-            return string.Empty;
+            veaPlatform.Kill();
         }
 
         private void AddRoute()
@@ -363,102 +236,7 @@ namespace client.service.vea
             foreach (var item in ips)
             {
                 VeaLanIPAddress[] _lanips = ExcludeLanIP(item.Value.LanIPs, item.Value.Client);
-                AddRoute(_lanips);
-            }
-        }
-        private void AddRoute(VeaLanIPAddress[] ip)
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                AddRouteWindows(ip);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                AddRouteLinux(ip);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                AddRouteOsx(ip);
-            }
-        }
-        private void AddRouteWindows(VeaLanIPAddress[] ip)
-        {
-            if (interfaceNumber > 0)
-            {
-                List<string> commands = new List<string>(ip.Length);
-                foreach (var item in ip)
-                {
-                    GetMinNetWork(item, out byte mask);
-                    byte[] maskArr = BitConverter.GetBytes(BinaryPrimitives.ReverseEndianness(0xffffffff << (32 - mask)));
-                    commands.Add($"route add {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())} mask {string.Join(".", maskArr)} {config.IP} metric 5 if {interfaceNumber}");
-                }
-                Command.Windows(string.Empty, commands.ToArray());
-            }
-        }
-        private void AddRouteLinux(VeaLanIPAddress[] ip)
-        {
-            string[] commands = ip.Select(item =>
-            {
-                GetMinNetWork(item, out byte mask);
-                return $"ip route add {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())}/{mask} via {config.IP} dev {veaName} metric 1 ";
-            }).ToArray();
-            Command.Linux(string.Empty, commands);
-        }
-        private void AddRouteOsx(VeaLanIPAddress[] ip)
-        {
-            string[] commands = ip.Select(item =>
-            {
-                GetMinNetWork(item, out byte mask);
-                return $"route add -net {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())}/{mask} {config.IP}";
-            }).ToArray();
-            if (commands.Length > 0)
-            {
-                Command.Osx(string.Empty, commands.ToArray());
-            }
-        }
-
-        private void DelRoute(VeaLanIPAddress[] ip)
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                DelRouteWindows(ip);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                DelRouteLinux(ip);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                DelRouteOsx(ip);
-            }
-        }
-        private void DelRouteWindows(VeaLanIPAddress[] ip)
-        {
-            if (interfaceNumber > 0)
-            {
-                string[] commands = ip.Select(item => $"route delete {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())}").ToArray();
-                Command.Windows(string.Empty, commands.ToArray());
-            }
-        }
-        private void DelRouteLinux(VeaLanIPAddress[] ip)
-        {
-            string[] commands = ip.Select(item =>
-            {
-                GetMinNetWork(item, out byte mask);
-                return $"ip route del {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())}/{mask}";
-            }).ToArray();
-            Command.Linux(string.Empty, commands);
-        }
-        private void DelRouteOsx(VeaLanIPAddress[] ip)
-        {
-            string[] commands = ip.Select(item =>
-            {
-                GetMinNetWork(item, out byte mask);
-                return $"route delete -net {string.Join(".", BinaryPrimitives.ReverseEndianness(item.IPAddress).ToBytes())}/{mask}";
-            }).ToArray();
-            if (commands.Length > 0)
-            {
-                Command.Osx(string.Empty, commands.ToArray());
+                veaPlatform.AddRoute(_lanips);
             }
         }
 
@@ -466,11 +244,10 @@ namespace client.service.vea
         {
             foreach (var item in _lanips)
             {
-                lanips.TryRemove(GetMinNetWork(item, out _), out _);
+                lanips.TryRemove(item.NetWork, out _);
             }
-            DelRoute(_lanips);
+            veaPlatform.DelRoute(_lanips);
         }
-
         private void AddLanMasks(IPAddressInfo ips, ClientInfo client)
         {
             var _lanips = ExcludeLanIP(ips.LanIPs, client);
@@ -481,13 +258,13 @@ namespace client.service.vea
                     Client = client,
                     IP = item.IPAddress,
                     LanIPs = ips.LanIPs,
-                    NetWork = GetNetWork(item.IPAddress, item.Mask),
-                    Mask = item.Mask
+                    NetWork = item.IPAddress & item.MaskValue,
+                    MaskLength = item.MaskLength,
+                    MaskValue = item.MaskValue
                 };
-                lanips.AddOrUpdate(GetMinNetWork(item, out _), cache, (a, b) => cache);
+                lanips.AddOrUpdate(cache.NetWork, cache, (a, b) => cache);
             }
         }
-
         /// <summary>
         /// 排除与目标客户端连接的ip
         /// </summary>
@@ -496,75 +273,15 @@ namespace client.service.vea
         /// <returns></returns>
         private VeaLanIPAddress[] ExcludeLanIP(VeaLanIPAddress[] lanips, ClientInfo client)
         {
-            IPAddress ip = client.IPAddress.Address;
-
-            //跟目标客户端是局域网连接，则排除连接的ip网段, 连接的ip，与目标传来的局域网ip，进行ip匹配，是否是同网段
-            if (client.ConnectType == ClientConnectTypes.P2P && ip.IsLan())
+            uint ip = BinaryPrimitives.ReadUInt32BigEndian(client.IPAddress.Address.GetAddressBytes());
+            uint ip1 = BinaryPrimitives.ReadUInt32BigEndian(signInStateInfo.LocalInfo.LocalIp.GetAddressBytes());
+            return lanips.Where(c =>
             {
-                lanips = lanips.Where(c =>
-                {
-                    //取网络号不一样的
-                    return GetNetWork(BinaryPrimitives.ReadUInt32BigEndian(ip.GetAddressBytes()), c.Mask) != GetNetWork(c.IPAddress, c.Mask);
-                }).ToArray();
-            }
-            return lanips;
+                //取网络号不一样的
+                return (ip & c.MaskValue) != c.NetWork && (ip1 & c.MaskValue) != c.NetWork;
+            }).ToArray();
         }
 
-        /// <summary>
-        /// 重新计算其掩码，不显式定义掩码时，给它计算出一个来
-        /// </summary>
-        /// <param name="_ips"></param>
-        private void ResetMask(IPAddressInfo _ips)
-        {
-            foreach (var item in _ips.LanIPs)
-            {
-                if (item.Mask == 0)
-                {
-                    item.Mask = 32;
-                    for (int i = 0; i < sizeof(uint); i++)
-                    {
-                        if (((item.IPAddress >> (i * 8)) & 0x000000ff) != 0)
-                        {
-                            break;
-                        }
-                        item.Mask -= 8;
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// 获取网络号
-        /// </summary>
-        /// <param name="ip">小端</param>
-        /// <returns>网络号 小端</returns>
-        public uint GetNetWork(uint ip, byte maskBitLength)
-        {
-            if (maskBitLength >= 32 || maskBitLength == 0) return ip;
-
-            return ip & (uint)(1 << (32 - maskBitLength));
-        }
-
-        /// <summary>
-        /// 最小网络号，整段的 32 24 16 8，用作一段判断，二段判断其具体掩码
-        /// </summary>
-        /// <param name="ip"></param>
-        /// <returns>网络号 小端</returns>
-        public uint GetMinNetWork(VeaLanIPAddress ip, out byte maskBitLength)
-        {
-            uint mask = 0xffffff00;
-            maskBitLength = 24;
-            for (int i = 1; i < sizeof(uint); i++)
-            {
-                if (((ip.IPAddress >> (i * 8)) & 0x000000ff) == 0 || maskBitLength > ip.Mask)
-                {
-                    mask <<= 8;
-                    maskBitLength -= 8;
-                }
-                else break;
-            }
-            return ip.IPAddress & mask;
-        }
     }
 
     /// <summary>
@@ -591,7 +308,14 @@ namespace client.service.vea
         /// 网络号，小端
         /// </summary>
         public uint NetWork { get; set; }
-        public byte Mask { get; set; }
+        /// <summary>
+        /// 掩码长度 24 16 8什么的
+        /// </summary>
+        public byte MaskLength { get; set; }
+        /// <summary>
+        /// 掩码具体值 24就是 0xffffff00
+        /// </summary>
+        public uint MaskValue { get; set; }
     }
 
     /// <summary>
@@ -614,7 +338,11 @@ namespace client.service.vea
         /// <returns></returns>
         public byte[] ToBytes()
         {
-            var bytes = new byte[1 + 4 + 1 + LanIPs.Length * 5];
+            var bytes = new byte[
+                1   //ip length
+                + 4 //ip
+                + 1 // LanIPs length
+                + LanIPs.Length * 17];
             var span = bytes.AsSpan();
 
             int index = 0;
@@ -629,8 +357,14 @@ namespace client.service.vea
             {
                 LanIPs[i].IPAddress.ToBytes(bytes.AsMemory(index));
                 index += 4;
-                bytes[index] = LanIPs[i].Mask;
+                bytes[index] = LanIPs[i].MaskLength;
                 index += 1;
+                LanIPs[i].MaskValue.ToBytes(bytes.AsMemory(index));
+                index += 4;
+                LanIPs[i].NetWork.ToBytes(bytes.AsMemory(index));
+                index += 4;
+                LanIPs[i].Broadcast.ToBytes(bytes.AsMemory(index));
+                index += 4;
             }
 
             return bytes;
@@ -663,12 +397,85 @@ namespace client.service.vea
                 byte mask = span[index];
                 index += 1;
 
+                ReadOnlyMemory<byte> maskvalue = memory.Slice(index, 4);
+                index += 4;
+
+                ReadOnlyMemory<byte> network = memory.Slice(index, 4);
+                index += 4;
+
+                ReadOnlyMemory<byte> broadcast = memory.Slice(index, 4);
+                index += 4;
+
                 LanIPs[i] = new VeaLanIPAddress
                 {
                     IPAddress = ip.ToUInt32(),
-                    Mask = mask
+                    MaskLength = mask,
+                    MaskValue = maskvalue.ToUInt32(),
+                    NetWork = network.ToUInt32(),
+                    Broadcast = broadcast.ToUInt32(),
                 };
             }
         }
+    }
+
+    /// <summary>
+    /// 局域网在线设备
+    /// </summary>
+    public sealed class VeaLanIPAddressOnLine
+    {
+        public Dictionary<uint, VeaLanIPAddressOnLineItem> Items { get; set; } = new Dictionary<uint, VeaLanIPAddressOnLineItem>();
+
+        public byte[] ToBytes()
+        {
+            if (Items.Count == 0) return Helper.EmptyArray;
+
+            MemoryStream memoryStream = new MemoryStream();
+            byte[] keyBytes = new byte[4];
+            foreach (var item in Items.ToArray())
+            {
+                item.Key.ToBytes(keyBytes);
+                memoryStream.Write(keyBytes, 0, keyBytes.Length);
+
+                memoryStream.WriteByte((byte)(item.Value.Online ? 1 : 0));
+
+                ReadOnlySpan<byte> name = item.Value.Name.GetUTF16Bytes();
+                memoryStream.WriteByte((byte)name.Length);
+                memoryStream.WriteByte((byte)item.Value.Name.Length);
+                memoryStream.Write(name);
+            }
+
+            return memoryStream.ToArray();
+        }
+
+        public void DeBytes(ReadOnlyMemory<byte> memory)
+        {
+            if (memory.Length == 0) return;
+
+            ReadOnlySpan<byte> span = memory.Span;
+
+            int index = 0;
+            while (index < memory.Length)
+            {
+                uint key = span.Slice(index).ToUInt32();
+                index += 4;
+
+                bool online = span[index] == 1;
+                index += 1;
+
+                string name = span.Slice(index + 2, span[index]).GetUTF16String(span[index + 1]);
+                index += 1 + 1 + span[index];
+
+                Items[key] = new VeaLanIPAddressOnLineItem { Online = online, Name = name };
+            }
+        }
+
+    }
+    /// <summary>
+    /// 局域网在线设备
+    /// </summary>
+    public sealed class VeaLanIPAddressOnLineItem
+    {
+        public bool Online { get; set; }
+        public string Name { get; set; } = string.Empty;
     }
 }

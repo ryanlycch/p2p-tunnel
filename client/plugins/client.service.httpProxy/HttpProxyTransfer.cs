@@ -1,7 +1,13 @@
 ﻿using common.libs;
 using common.proxy;
 using System;
+using System.Buffers;
 using System.IO;
+using System.Net.Sockets;
+using System.Net;
+using System.Text;
+using System.Threading.Tasks;
+using common.libs.extends;
 
 namespace client.service.httpProxy
 {
@@ -26,11 +32,18 @@ namespace client.service.httpProxy
                     ClearPac();
                 }
             };
+            Console.CancelKeyPress += (s, e) =>
+            {
+                if (set == true)
+                {
+                    ClearPac();
+                }
+            };
         }
 
         bool set = false;
 
-        public void Update()
+        public bool Update()
         {
             string pacContent = string.Empty;
             string file = Path.Join(uiconfig.Web.Root, "proxy-custom.pac");
@@ -44,12 +57,13 @@ namespace client.service.httpProxy
                 pacContent = File.ReadAllText("./proxy.pac");
             }
 
-            pacContent = pacContent.Replace("{proxy-address}", $"127.0.0.1:{config.ListenPort}");
+            pacContent = pacContent.Replace("{proxy-address}", $"{config.ProxyIp}:{config.ListenPort}");
             File.WriteAllText(file, pacContent);
 
             if (config.ListenEnable && config.IsPac)
             {
-                SetPac($"http://{(uiconfig.Web.BindIp == "+" ? "127.0.0.1" : uiconfig.Web.BindIp)}:{uiconfig.Web.Port}/{Path.GetFileName(file)}");
+                string pac = $"http://{(uiconfig.Web.BindIp == "+" ? config.ProxyIp.ToString() : uiconfig.Web.BindIp)}:{uiconfig.Web.Port}/{Path.GetFileName(file)}";
+                SetPac(pac, $"http://{config.ProxyIp}:{config.ListenPort}");
             }
             else
             {
@@ -58,12 +72,13 @@ namespace client.service.httpProxy
 
             if (config.ListenEnable)
             {
-                proxyServer.Start(config.ListenPort, config.Plugin);
+                return proxyServer.Start(config.ListenPort, config.Plugin);
             }
             else
             {
                 proxyServer.Stop(config.Plugin);
             }
+            return true;
         }
 
         /// <summary>
@@ -102,11 +117,12 @@ namespace client.service.httpProxy
         /// <summary>
         /// 设置系统pac
         /// </summary>
-        /// <param name="url"></param>
-        public void SetPac(string url)
+        /// <param name="pacUrl"></param>
+        /// <param name="proxyUrl"></param>
+        public void SetPac(string pacUrl, string proxyUrl)
         {
             set = true;
-            ProxySystemSetting.Set(url);
+            ProxySystemSetting.Set(pacUrl, proxyUrl);
         }
         /// <summary>
         /// 清除pac
@@ -115,6 +131,43 @@ namespace client.service.httpProxy
         {
             set = false;
             ProxySystemSetting.Clear();
+        }
+
+        public async Task<EnumProxyCommandStatusMsg> Test()
+        {
+            if (config.ListenEnable == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+            if (ProxyPluginLoader.GetPlugin(config.Plugin, out IProxyPlugin plugin) == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+
+            IPEndPoint target = new IPEndPoint(config.ProxyIp, config.ListenPort);
+
+            try
+            {
+                using Socket socket = new Socket(target.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(target);
+                await socket.SendAsync(Encoding.UTF8.GetBytes($"CONNECT- / HTTP/1.1\r\nHost: www.baidu.com:443\r\n\r\n"), SocketFlags.None);
+                byte[] bytes = ArrayPool<byte>.Shared.Rent(ProxyHelper.MagicData.Length);
+                int length = await socket.ReceiveAsync(bytes, SocketFlags.None);
+                socket.SafeClose();
+
+                EnumProxyCommandStatusMsg statusMsg = EnumProxyCommandStatusMsg.Listen;
+                if (length > 0)
+                {
+                    statusMsg = (EnumProxyCommandStatusMsg)bytes[0];
+                }
+                ArrayPool<byte>.Shared.Return(bytes);
+                return statusMsg;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex + "");
+            }
+            return EnumProxyCommandStatusMsg.Listen;
         }
     }
 }

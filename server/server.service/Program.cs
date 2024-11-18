@@ -3,20 +3,23 @@ using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Reflection;
 using System.Linq;
-using server.service.socks5;
+//using server.service.socks5;
 using System.Threading;
 using common.server;
 using System.IO;
 using server.service.users;
 using common.proxy;
-using server.service.httpProxy;
+//using server.service.httpProxy;
 using server.service.forward;
+using System.Threading.Tasks;
+using server.service.vea;
+using common.vea;
 
 namespace server.service
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += (a, b) =>
             {
@@ -32,19 +35,24 @@ namespace server.service
             //可以改为从dll文件加载
             Assembly[] assemblys = new Assembly[] {
                 typeof(ForwardMessenger).Assembly,
-                typeof(Socks5SettingMessenger).Assembly,
-                typeof(HttpProxySettingMessenger).Assembly,
+              //  typeof(Socks5SettingMessenger).Assembly,
+              //  typeof(HttpProxySettingMessenger).Assembly,
                 typeof(UsersMessenger).Assembly,
                 typeof(ProxyMessenger).Assembly,
 
+                typeof(VeaSocks5ProxyPlugin).Assembly,
+                typeof(VeaMessenger).Assembly,
+
+                typeof(VeaSocks5MessengerIds).Assembly,
+
                  //以下是为了获取信息
                 typeof(common.server.model.SignInMessengerIds).Assembly,
-                typeof(common.proxy.ProxyMessengerIds).Assembly,
-                typeof(common.httpProxy.HttpProxyMessengerIds).Assembly,
-                typeof(common.socks5.Socks5MessengerIds).Assembly,
+                typeof(ProxyMessengerIds).Assembly,
+              //  typeof(common.httpProxy.HttpProxyMessengerIds).Assembly,
+             //   typeof(common.socks5.Socks5MessengerIds).Assembly,
                 typeof(common.forward.ForwardMessengerIds).Assembly,
 
-                typeof(server.service.users.model.UsersMessengerIds).Assembly,
+                typeof(SignInAccessValidator).Assembly,
 
             }.Concat(AppDomain.CurrentDomain.GetAssemblies()).ToArray();
 
@@ -58,6 +66,8 @@ namespace server.service
             serviceProvider = serviceCollection.BuildServiceProvider();
             PluginLoader.LoadAfter(plugins, serviceProvider, assemblys);
 
+            PrintProxyPlugin(serviceProvider, assemblys);
+
             var config = serviceProvider.GetService<Config>();
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
             Logger.Instance.Info("没什么报红的，就说明运行成功了");
@@ -66,11 +76,11 @@ namespace server.service
             Logger.Instance.Warning($"当前版本：{Helper.Version}，如果客户端版本与此不一致，则可能无法连接");
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
 
-            Console.ReadLine();
+            await Helper.Await();
         }
 
 
-        static void LoggerConsole()
+        private static void LoggerConsole()
         {
             if (Directory.Exists("log") == false)
             {
@@ -109,5 +119,20 @@ namespace server.service
                 sw.Dispose();
             };
         }
+
+        private static void PrintProxyPlugin(ServiceProvider services, Assembly[] assemblys)
+        {
+            var iAccesss = ReflectionHelper.GetInterfaceSchieves(assemblys, typeof(IAccess)).Distinct()
+                .Select(c => services.GetService(c)).Concat(ProxyPluginLoader.plugins.Values).Where(c => c is IAccess).Select(c => (IAccess)c);
+
+            Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
+            Logger.Instance.Debug("权限值,uint 每个权限占一位，最多32个权限");
+            foreach (var item in iAccesss.OrderBy(c => c.Access))
+            {
+                Logger.Instance.Info($"{Convert.ToString(item.Access, 2).PadLeft(Logger.Instance.PaddingWidth, '0')}  {item.Name}");
+            }
+            Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
+        }
+
     }
 }

@@ -92,6 +92,12 @@ namespace common.server
         public Memory<byte> ReceiveData { get; set; }
         #endregion
 
+        public ulong SentBytes { get; set; }
+        /// <summary>
+        /// 发送数据权限，当任何一位上为1时，不可发送数据
+        /// </summary>
+        public byte SendDenied { get; set; }
+
         /// <summary>
         /// 发送
         /// </summary>
@@ -196,6 +202,7 @@ namespace common.server
                 connectId = value;
             }
         }
+
         /// <summary>
         /// 已连接
         /// </summary>
@@ -351,6 +358,11 @@ namespace common.server
         #endregion
 
 
+        public ulong SentBytes { get; set; }
+        /// <summary>
+        /// 发送数据权限，当任何一位上为1时，不可发送数据
+        /// </summary>
+        public byte SendDenied { get; set; }
         /// <summary>
         /// 发送
         /// </summary>
@@ -511,6 +523,7 @@ namespace common.server
                         } while (len < data.Length);
 
                         NetPeer.Send(data, 0, data.Length, DeliveryMethod.ReliableOrdered);
+                        //SentBytes += (ulong)data.Length;
                         NetPeer.Update();
                     }
                     else
@@ -523,7 +536,8 @@ namespace common.server
                 }
                 catch (Exception ex)
                 {
-                    Logger.Instance.DebugError(ex);
+                    if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                        Logger.Instance.Error(ex);
                 }
             }
             return false;
@@ -545,7 +559,6 @@ namespace common.server
                     }
                     NetPeer = null;
                 }
-
             }
         }
 
@@ -607,12 +620,14 @@ namespace common.server
                 try
                 {
                     await TcpSocket.SendAsync(data, SocketFlags.None);
+                    //SentBytes += (ulong)data.Length;
                     return true;
                 }
                 catch (Exception ex)
                 {
                     Disponse();
-                    Logger.Instance.DebugError(ex);
+                    if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                        Logger.Instance.Error(ex);
                 }
             }
             return false;

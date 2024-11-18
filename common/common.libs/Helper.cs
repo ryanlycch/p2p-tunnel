@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common.libs
 {
@@ -13,10 +15,19 @@ namespace common.libs
         public static byte[] AnyIpv6Array = IPAddress.IPv6Any.GetAddressBytes();
         public static byte[] AnyPoryArray = new byte[] { 0, 0 };
 
-
-        public static string SeparatorString = ",";
-        public static char SeparatorChar = ',';
-        public static string Version = "2.1.0.0-beta";
+        /// <summary>
+        /// 空格
+        /// </summary>
+        public static char SeparatorCharSpace = ' ';
+        /// <summary>
+        /// 逗号
+        /// </summary>
+        public static char SeparatorCharComma = ',';
+        /// <summary>
+        /// 斜杠
+        /// </summary>
+        public static char SeparatorCharSlash = '/';
+        public static string Version = "2.1.0.1-beta";
 
         public static string GetStackTraceModelName()
         {
@@ -28,6 +39,24 @@ namespace common.libs
                 result += (stacktrace.GetFrame(i).GetFileName() + "->" + method.Name + "\n");
             }
             return result;
+        }
+
+        public static ushort[] Range(ushort start, ushort end)
+        {
+            ushort[] result = new ushort[(end - start) + 1];
+            for (ushort p = start, i = 0; p <= end; p++, i++)
+            {
+                result[i] = p;
+            }
+            return result;
+        }
+
+        public static async Task Await()
+        {
+            CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+            AppDomain.CurrentDomain.ProcessExit += (sender, e) => cancellationTokenSource.Cancel();
+            Console.CancelKeyPress += (sender, e) => cancellationTokenSource.Cancel();
+            await Task.Delay(-1, cancellationTokenSource.Token);
         }
     }
 }

@@ -1,7 +1,8 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using common.libs;
 using common.server;
 using System.Reflection;
+using common.user;
+using common.libs;
 
 namespace server.service.users
 {
@@ -9,7 +10,7 @@ namespace server.service.users
     {
         public void LoadAfter(ServiceProvider services, Assembly[] assemblys)
         {
-            var config = services.GetService<Config>();
+            var config = services.GetService<common.user.Config>();
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
             Logger.Instance.Info("账号模块已加载");
             if (config.Enable)
@@ -25,8 +26,9 @@ namespace server.service.users
 
         public void LoadBefore(ServiceCollection services, Assembly[] assemblys)
         {
-            services.AddSingleton<Config>();
-            services.AddSingleton<IUserStore,UserStore>();
+            services.AddSingleton<common.user.Config>();
+            services.AddSingleton<IUserStore, UserStore>();
+            services.AddSingleton<IUserInfoCaching, SignInAccessValidator>();
         }
     }
 }

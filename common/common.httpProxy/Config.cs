@@ -4,6 +4,7 @@ using common.proxy;
 using common.server.model;
 using System;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace common.httpProxy
@@ -27,23 +28,25 @@ namespace common.httpProxy
             ListenEnable = config.ListenEnable;
             ListenPort = config.ListenPort;
             IsPac = config.IsPac;
+            ProxyIp = config.ProxyIp;
             IsCustomPac = config.IsCustomPac;
-            TargetName = config.TargetName;
+            TargetConnectionId = config.TargetConnectionId;
+            SaveConfig().Wait();
         }
 
         [System.Text.Json.Serialization.JsonIgnore]
-        public byte Plugin => 4;
+        public byte Plugin => 2;
 
-
-        public bool IsPac { get; set; } = false;
-        public bool IsCustomPac { get; set; } = false;
-        public string TargetName { get; set; } = string.Empty;
+        public IPAddress ProxyIp { get; set; } = IPAddress.Loopback;
+        public bool IsPac { get; set; }
+        public bool IsCustomPac { get; set; }
+        public ulong TargetConnectionId { get; set; }
 
 
         /// <summary>
         /// 开启监听
         /// </summary>
-        public bool ListenEnable { get; set; } = false;
+        public bool ListenEnable { get; set; }
         /// <summary>
         /// 监听端口
         /// </summary>
@@ -51,15 +54,16 @@ namespace common.httpProxy
         /// <summary>
         /// 允许连接
         /// </summary>
-        public bool ConnectEnable { get; set; } = false;
+        public bool ConnectEnable { get; set; } = true;
         public EnumBufferSize BufferSize { get; set; } = EnumBufferSize.KB_8;
+
         /// <summary>
         /// 读取
         /// </summary>
         /// <returns></returns>
         public async Task<Config> ReadConfig()
         {
-            return await configDataProvider.Load();
+            return await configDataProvider.Load() ?? new Config();
         }
         /// <summary>
         /// 读取
@@ -83,10 +87,15 @@ namespace common.httpProxy
             ListenEnable = _config.ListenEnable;
             ListenPort = _config.ListenPort;
             IsPac = _config.IsPac;
+            ProxyIp = _config.ProxyIp;
             IsCustomPac = _config.IsCustomPac;
-            TargetName = _config.TargetName;
+            TargetConnectionId = _config.TargetConnectionId;
 
             await configDataProvider.Save(jsonStr).ConfigureAwait(false);
+        }
+        public async Task SaveConfig()
+        {
+            await configDataProvider.Save(this).ConfigureAwait(false);
         }
     }
 }

@@ -1,6 +1,6 @@
-﻿using common.libs.database;
+﻿using common.libs;
+using common.libs.database;
 using common.libs.extends;
-using common.proxy;
 using common.server.model;
 using System;
 using System.Buffers.Binary;
@@ -20,7 +20,7 @@ namespace client.service.vea
     {
         public Config() { }
         private readonly IConfigDataProvider<Config> configDataProvider;
-       
+
 
         public Config(IConfigDataProvider<Config> configDataProvider)
         {
@@ -34,12 +34,14 @@ namespace client.service.vea
             ListenPort = config.ListenPort;
             BufferSize = config.BufferSize;
             ConnectEnable = config.ConnectEnable;
-            UdpBind = config.UdpBind;
-            ParseLanIPs();
+            BroadcastBind = config.BroadcastBind;
+            BroadcastEnable = config.BroadcastEnable;
+            BroadcastList = config.BroadcastList;
+            SaveConfig().Wait();
         }
 
         [JsonIgnore]
-        public byte Plugin => 2;
+        public byte Plugin => common.vea.Config.plugin;
 
         /// <summary>
         /// 启用
@@ -73,9 +75,13 @@ namespace client.service.vea
         /// <summary>
         /// 允许被连接
         /// </summary>
-        public bool ConnectEnable { get; set; }
+        public bool ConnectEnable { get; set; } = true; 
 
-        public IPAddress UdpBind { get; set; } = IPAddress.Any;
+        public IPAddress BroadcastBind { get; set; } = IPAddress.Any;
+        public bool BroadcastEnable { get; set; }
+        public IPAddress[] BroadcastList { get; set; } = Array.Empty<IPAddress>();
+        [JsonIgnore]
+        public uint[] VeaBroadcastList { get; set; } = Array.Empty<uint>();
 
         /// <summary>
         /// 读取配置文件
@@ -83,7 +89,7 @@ namespace client.service.vea
         /// <returns></returns>
         public async Task<Config> ReadConfig()
         {
-            return await configDataProvider.Load();
+            return await configDataProvider.Load() ?? new Config();
         }
         /// <summary>
         /// 读取配置文件
@@ -109,30 +115,60 @@ namespace client.service.vea
             ListenPort = _config.ListenPort;
             BufferSize = _config.BufferSize;
             ConnectEnable = _config.ConnectEnable;
-            UdpBind = _config.UdpBind;
+            BroadcastBind = _config.BroadcastBind;
+            BroadcastEnable = _config.BroadcastEnable;
+            BroadcastList = _config.BroadcastList;
             ParseLanIPs();
+            ParseBroadcastList();
 
             await configDataProvider.Save(jsonStr).ConfigureAwait(false);
 
         }
 
+        public async Task SaveConfig()
+        {
+            ParseLanIPs();
+            ParseBroadcastList();
+
+            await configDataProvider.Save(this).ConfigureAwait(false);
+
+        }
+
         private void ParseLanIPs()
         {
-            VeaLanIPs = LanIPs.Select(c =>
+            try
             {
-                string[] arr = c.Split('/');
-                byte mask = 0;
-                IPAddress ip = IPAddress.Parse(arr[0]);
-                if (arr.Length > 1)
+                VeaLanIPs = LanIPs.Select(c => c.Split(Helper.SeparatorCharSlash)).Where(c => c[0] != IPAddress.Any.ToString()).Select(c =>
                 {
-                    mask = byte.Parse(arr[1]);
-                }
-                return new VeaLanIPAddress
-                {
-                    IPAddress = BinaryPrimitives.ReadUInt32BigEndian(ip.GetAddressBytes()),
-                    Mask = mask
-                };
-            }).ToArray();
+                    byte maskLength = c.Length > 1 ? byte.Parse(c[1]) : (byte)0;
+                    uint ip = BinaryPrimitives.ReadUInt32BigEndian(IPAddress.Parse(c[0]).GetAddressBytes());
+                    //每填写掩码，自动计算
+                    if (c.Length == 1)
+                    {
+                        maskLength = NetworkHelper.MaskLength(ip);
+                    }
+                    //掩码十进制
+                    uint maskValue = NetworkHelper.MaskValue(maskLength);
+                    return new VeaLanIPAddress
+                    {
+                        IPAddress = ip,
+                        MaskLength = maskLength,
+                        MaskValue = maskValue,
+                        NetWork = ip & maskValue,
+                        Broadcast = ip | (~maskValue),
+                    };
+
+                }).ToArray();
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error(ex);
+            }
+        }
+
+        private void ParseBroadcastList()
+        {
+            VeaBroadcastList = BroadcastList.Where(c => c.GetIsBroadcastAddress()).Select(c => BinaryPrimitives.ReadUInt32BigEndian(c.GetAddressBytes())).ToArray();
         }
     }
 
@@ -142,6 +178,12 @@ namespace client.service.vea
         /// ip，存小端
         /// </summary>
         public uint IPAddress { get; set; }
-        public byte Mask { get; set; } = 32;
+        public byte MaskLength { get; set; }
+        public uint MaskValue { get; set; }
+        public uint NetWork { get; set; }
+        public uint Broadcast { get; set; }
+
     }
+
+   
 }

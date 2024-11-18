@@ -1,29 +1,27 @@
 ﻿using common.forward;
 using common.proxy;
-using server.messengers;
-using server.messengers.singnin;
+using server.messengers.signin;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace server.service.forward
 {
-    public interface IForwardProxyPlugin : IProxyPlugin
-    {
-    }
-
     public sealed class ForwardProxyPlugin : common.forward.ForwardProxyPlugin, IForwardProxyPlugin
     {
-        public static uint Access => 0b00000000_00000000_00000000_00001000;
-        private readonly IServiceAccessValidator serviceAccessProvider;
+        public override HttpHeaderCacheInfo Headers { get; set; }
+        public override Memory<byte> HeadersBytes { get; set; }
 
-        public ForwardProxyPlugin(common.forward.Config config, IProxyServer proxyServer, IForwardTargetProvider forwardTargetProvider, IServiceAccessValidator serviceAccessProvider, IClientSignInCaching clientSignInCaching, IForwardTargetCaching<ForwardTargetCacheInfo> forwardTargetCaching) : base(config, proxyServer, forwardTargetProvider)
+        public ForwardProxyPlugin(common.forward.Config config, IProxyServer proxyServer,
+            IForwardTargetProvider forwardTargetProvider, IClientSignInCaching clientSignInCaching,
+            IForwardTargetCaching<ForwardTargetCacheInfo> forwardTargetCaching) : base(config, proxyServer, forwardTargetProvider)
         {
-            this.serviceAccessProvider = serviceAccessProvider;
             clientSignInCaching.OnOffline += (client) =>
             {
-                var keys = forwardTargetCaching.Remove(client.Name);
+                List<ushort> keys = forwardTargetCaching.Remove(client.ConnectionId).ToList();
                 if (keys.Any())
                 {
-                    foreach (var item in keys)
+                    foreach (ushort item in keys)
                     {
                         proxyServer.Stop(item);
                     }
@@ -31,16 +29,10 @@ namespace server.service.forward
             };
         }
 
-        public override bool ValidateAccess(ProxyInfo info)
+        public override bool HandleRequestData(ProxyInfo info)
         {
-           
-#if DEBUG
-            return true;
-#else
-             return serviceAccessProvider.Validate(info.Connection, (uint)EnumServiceAccess.Setting);
-#endif
-
+            info.ProxyPlugin.Headers = new HttpHeaderCacheInfo { Addr = info.ClientEP.Address, Name = "/", Proxy = Name };
+            return base.HandleRequestData(info);
         }
-
     }
 }

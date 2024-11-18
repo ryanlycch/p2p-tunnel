@@ -1,12 +1,17 @@
 ﻿using common.forward;
 using common.libs;
 using common.libs.database;
+using common.libs.extends;
 using common.proxy;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace client.service.forward
 {
@@ -43,7 +48,7 @@ namespace client.service.forward
 
             forwardProxyPlugin.OnStarted += (port) => StateChanged(port, true);
             forwardProxyPlugin.OnStoped += (port) => StateChanged(port, false);
-            
+
 
         }
 
@@ -197,7 +202,7 @@ namespace client.service.forward
                 saveInfo.SourceIp = forward.Forward.SourceIp;
                 saveInfo.TargetIp = forward.Forward.TargetIp;
                 saveInfo.TargetPort = forward.Forward.TargetPort;
-                saveInfo.Name = forward.Forward.Name;
+                saveInfo.ConnectionId = forward.Forward.ConnectionId;
             }
             else
             {
@@ -226,7 +231,7 @@ namespace client.service.forward
                 {
                     IPAddress = forward.Forward.TargetIp.GetAddressBytes(),
                     Port = forward.Forward.TargetPort,
-                    Name = forward.Forward.Name,
+                    ConnectionId = forward.Forward.ConnectionId,
                 });
             }
             else
@@ -235,7 +240,7 @@ namespace client.service.forward
                 {
                     IPAddress = forward.Forward.TargetIp.GetAddressBytes(),
                     Port = forward.Forward.TargetPort,
-                    Name = forward.Forward.Name,
+                    ConnectionId = forward.Forward.ConnectionId,
                 });
             }
 
@@ -266,6 +271,39 @@ namespace client.service.forward
             SaveP2PConfig();
         }
 
+        public async Task<EnumProxyCommandStatusMsg> Test(string host, int port)
+        {
+            if (IPAddress.TryParse(host, out IPAddress ip) == false)
+            {
+                ip = Dns.GetHostEntry(host).AddressList[0];
+            }
+            if (ip.Equals(IPAddress.Any)) ip = IPAddress.Loopback;
+            IPEndPoint target = new IPEndPoint(ip, port);
+
+            try
+            {
+                using Socket socket = new Socket(target.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(target);
+                await socket.SendAsync(Encoding.UTF8.GetBytes($"CONNECT- / HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"), SocketFlags.None);
+                byte[] bytes = ArrayPool<byte>.Shared.Rent(ProxyHelper.MagicData.Length);
+                int length = await socket.ReceiveAsync(bytes, SocketFlags.None);
+                socket.SafeClose();
+
+                EnumProxyCommandStatusMsg statusMsg = EnumProxyCommandStatusMsg.Listen;
+                if (length > 0)
+                {
+                    statusMsg = (EnumProxyCommandStatusMsg)bytes[0];
+                }
+                ArrayPool<byte>.Shared.Return(bytes);
+                return statusMsg;
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error(ex);
+            }
+            return EnumProxyCommandStatusMsg.Listen;
+        }
+
         /// <summary>
         /// 开启监听
         /// </summary>
@@ -284,7 +322,7 @@ namespace client.service.forward
             }
             catch (Exception ex)
             {
-                Logger.Instance.DebugError(ex);
+                Logger.Instance.Error(ex);
                 return ex.Message;
             }
             return string.Empty;
@@ -330,7 +368,7 @@ namespace client.service.forward
                         {
                             IPAddress = forward.TargetIp.GetAddressBytes(),
                             Port = forward.TargetPort,
-                            Name = forward.Name
+                            ConnectionId = forward.ConnectionId,
                         });
                     }
                     catch (Exception)
@@ -349,7 +387,7 @@ namespace client.service.forward
                         {
                             IPAddress = forward.TargetIp.GetAddressBytes(),
                             Port = forward.TargetPort,
-                            Name = forward.Name
+                            ConnectionId = forward.ConnectionId,
                         });
                     }
                     catch (Exception)
@@ -381,7 +419,6 @@ namespace client.service.forward
         public uint ID { get; set; }
         public ushort Port { get; set; }
         public bool Listening { get; set; }
-        public string Name { get; set; } = string.Empty;
         public ForwardAliveTypes AliveType { get; set; } = ForwardAliveTypes.Web;
         public string Desc { get; set; } = string.Empty;
     }
@@ -414,11 +451,12 @@ namespace client.service.forward
         public List<P2PForwardInfo> Forwards { get; set; } = new List<P2PForwardInfo>();
         public bool Listening { get; set; } = false;
         public string Desc { get; set; } = string.Empty;
+        public EnumProxyCommandStatusMsg LastError { get; set; }
     }
     public sealed class P2PForwardInfo
     {
         public uint ID { get; set; }
-        public string Name { get; set; } = string.Empty;
+        public ulong ConnectionId { get; set; }
         public string SourceIp { get; set; } = string.Empty;
         public IPAddress TargetIp { get; set; } = IPAddress.Any;
         public ushort TargetPort { get; set; }

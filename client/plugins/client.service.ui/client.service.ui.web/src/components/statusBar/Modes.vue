@@ -1,27 +1,17 @@
 <template>
     <a href="javascript:;" class="modes-wrap" @click="handleShow">功能开关</a>
-    <el-dialog v-model="state.show" title="显示或隐藏一些功能" width="400" center top="1vh">
+    <el-dialog append-to-body v-model="state.show" title="显示或隐藏一些功能" width="400" center top="1vh">
         <div>
             <h3>节点功能</h3>
             <el-checkbox-group v-model="state.checkListNodes">
                 <template v-for="(item,index) in nodesPlugins" :key="index">
-                    <template v-if="item.checked">
-                        <el-checkbox :label="item.service" checked disabled>{{item.text}}</el-checkbox>
-                    </template>
-                    <template v-else>
-                        <el-checkbox :label="item.service" :checked="access(item.service)">{{item.text}}</el-checkbox>
-                    </template>
+                    <el-checkbox :label="item.service" :checked="access(item.service)">{{item.text}}</el-checkbox>
                 </template>
             </el-checkbox-group>
             <h3>服务器功能</h3>
             <el-checkbox-group v-model="state.checkListServer">
                 <template v-for="(item,index) in serverPlugins" :key="index">
-                    <template v-if="item.checked">
-                        <el-checkbox :label="item.service" checked disabled>{{item.text}}</el-checkbox>
-                    </template>
-                    <template v-else>
-                        <el-checkbox :label="item.service" :checked="access(item.service)">{{item.text}}</el-checkbox>
-                    </template>
+                    <el-checkbox :label="item.service" :checked="access(item.service)">{{item.text}}</el-checkbox>
                 </template>
             </el-checkbox-group>
         </div>
@@ -43,10 +33,10 @@ export default {
     setup() {
 
         const nodesFiles = require.context('../../views/nodes/', true, /plugin\.js/);
-        const nodesPlugins = nodesFiles.keys().map(c => nodesFiles(c).default);
+        const nodesPlugins = nodesFiles.keys().map(c => nodesFiles(c).default).filter(c => c.name);
 
         const serverFiles = require.context('../../views/server/', true, /plugin\.js/);
-        const serverPlugins = serverFiles.keys().map(c => serverFiles(c).default);
+        const serverPlugins = serverFiles.keys().map(c => serverFiles(c).default).filter(c => c.name);
 
         const servicesState = injectServices();
         const state = reactive({

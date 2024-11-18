@@ -636,13 +636,13 @@ namespace LiteNetLib
                         return -1;
 
                     default:
-                        NetDebug.WriteError($"[S] {ex}:{remoteEndPoint}");
+                        //NetDebug.WriteError($"[S] {ex}:{remoteEndPoint}");
                         return -1;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                NetDebug.WriteError($"[S] {ex}:{remoteEndPoint}");
+                //NetDebug.WriteError($"[S] {ex}:{remoteEndPoint}");
                 return 0;
             }
             finally

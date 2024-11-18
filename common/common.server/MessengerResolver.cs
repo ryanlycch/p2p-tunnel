@@ -92,7 +92,7 @@ namespace common.server
             Logger.Instance.Debug($"枚举类型ushort，已存在消息列表如下:");
             foreach (var item in ushorts)
             {
-                Logger.Instance.Info($"{item.Item1.PadLeft(32,'-')}  {item.Item2}-{item.Item3}");
+                Logger.Instance.Info($"{item.Item1.PadLeft(32, '-')}  {item.Item2}-{item.Item3}");
             }
             Logger.Instance.Warning(string.Empty.PadRight(Logger.Instance.PaddingWidth, '='));
         }
@@ -115,11 +115,17 @@ namespace common.server
         /// <returns></returns>
         public async Task InputData(IConnection connection)
         {
-            var receive = connection.ReceiveData;
+            Memory<byte> receive = connection.ReceiveData;
             //去掉表示数据长度的4字节
-            var readReceive = receive.Slice(4);
-            var responseWrap = connection.ReceiveResponseWrap;
-            var requestWrap = connection.ReceiveRequestWrap;
+            Memory<byte> readReceive = receive.Slice(4);
+            MessageResponseWrap responseWrap = connection.ReceiveResponseWrap;
+            MessageRequestWrap requestWrap = connection.ReceiveRequestWrap;
+
+            /*
+             * 中继
+             * request   A<-->B<-->C  计入A流量
+             * response  C<-->B<-->A  计入A流量
+             */
 
             connection.FromConnection = connection;
             try
@@ -131,17 +137,18 @@ namespace common.server
                     if (responseWrap.Relay && responseWrap.RelayIdLength - 1 - responseWrap.RelayIdIndex >= 0)
                     {
                         ulong nextId = responseWrap.RelayIds.Span.Slice(responseWrap.RelayIdIndex * MessageRequestWrap.RelayIdSize).ToUInt64();
-
                         //目的地连接对象
                         IConnection _connection = sourceConnectionSelector.Select(connection, nextId);
                         if (_connection == null || ReferenceEquals(connection, _connection)) return;
-
                         //RelayIdIndex 后移一位
                         receive.Span[MessageRequestWrap.RelayIdIndexPos]++;
-
-                        await _connection.WaitOne();
-                        await _connection.Send(receive).ConfigureAwait(false);
-                        _connection.Release();
+                        if (_connection.SendDenied == 0)
+                        {
+                            await _connection.WaitOne();
+                            await _connection.Send(receive).ConfigureAwait(false);
+                            _connection.SentBytes += (ulong)receive.Length;
+                            _connection.Release();
+                        }
                     }
                     else
                     {
@@ -169,18 +176,19 @@ namespace common.server
                         if (relayValidator.Validate(connection))
                         {
                             ulong nextId = requestWrap.RelayIds.Span.Slice(requestWrap.RelayIdIndex * MessageRequestWrap.RelayIdSize).ToUInt64();
-
                             //目的地连接对象
                             IConnection _connection = sourceConnectionSelector.Select(connection, nextId);
                             if (_connection == null || ReferenceEquals(connection, _connection)) return;
-
                             //RelayIdIndex 后移一位
                             receive.Span[MessageRequestWrap.RelayIdIndexPos]++;
-
-                            await _connection.WaitOne();
-                            //中继数据不再次序列化，直接在原数据上更新数据然后发送
-                            await _connection.Send(receive).ConfigureAwait(false);
-                            _connection.Release();
+                            if (_connection.SendDenied == 0)
+                            {
+                                await _connection.WaitOne();
+                                //中继数据不再次序列化，直接在原数据上更新数据然后发送
+                                await _connection.Send(receive).ConfigureAwait(false);
+                                connection.SentBytes += (ulong)receive.Length;
+                                _connection.Release();
+                            }
                         }
                         return;
                     }
@@ -197,13 +205,24 @@ namespace common.server
                     requestWrap.Payload = connection.FromConnection.Crypto.Decode(requestWrap.Payload);
                 }
                 //404,没这个插件
-                if (messengers.ContainsKey(requestWrap.MessengerId) == false)
+                if (messengers.TryGetValue(requestWrap.MessengerId, out MessengerCacheInfo plugin) == false)
                 {
-                    Logger.Instance.DebugError($"{requestWrap.MessengerId},{connection.ServerType}, not found");
+                    if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
+                        Logger.Instance.Error($"{requestWrap.MessengerId},{connection.ServerType}, not found");
+                    if (requestWrap.Reply == true)
+                    {
+                        bool res = await messengerSender.ReplyOnly(new MessageResponseWrap
+                        {
+                            Connection = responseConnection,
+                            Encode = requestWrap.Encode,
+                            Code = MessageResponeCodes.NOT_FOUND,
+                            RelayIds = requestWrap.RelayIds,
+                            RequestId = requestWrap.RequestId
+                        }).ConfigureAwait(false);
+                    }
                     return;
                 }
-
-                MessengerCacheInfo plugin = messengers[requestWrap.MessengerId];
+               
                 if (plugin.VoidMethod != null)
                 {
                     plugin.VoidMethod(connection);
@@ -227,16 +246,19 @@ namespace common.server
             }
             catch (Exception ex)
             {
-                Logger.Instance.Error(ex);
-                if (receive.Length > 1024)
+                if (Logger.Instance.LoggerLevel <= LoggerTypes.DEBUG)
                 {
-                    Logger.Instance.Error($"{connection.Address}:{string.Join(",", receive.Slice(0, 1024).ToArray())}");
+                    Logger.Instance.Error(ex);
+                    if (receive.Length > 1024)
+                    {
+                        Logger.Instance.Error($"{connection.Address}:{string.Join(",", receive.Slice(0, 1024).ToArray())}");
+                    }
+                    else
+                    {
+                        Logger.Instance.Error($"{connection.Address}:{string.Join(",", receive.ToArray())}");
+                    }
                 }
-                else
-                {
-                    Logger.Instance.Error($"{connection.Address}:{string.Join(",", receive.ToArray())}");
-                }
-                connection.Disponse();
+                //connection.Disponse();
             }
             finally
             {

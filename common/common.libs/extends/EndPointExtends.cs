@@ -5,42 +5,27 @@ using System.Net;
 
 namespace common.libs.extends
 {
-    /// <summary>
-    /// 
-    /// </summary>
     public static class EndPointExtends
     {
-        static Memory<byte> ipv6Loopback = IPAddress.IPv6Loopback.GetAddressBytes();
-        static Memory<byte> ipv6Multicast = IPAddress.Parse("ff00::").GetAddressBytes();
-        static Memory<byte> ipv6Local = IPAddress.Parse("fe80::").GetAddressBytes();
-        /// <summary>
-        /// 判断是不是本地地址
-        /// </summary>
-        /// <param name="endPoint"></param>
-        /// <returns></returns>
+        public static Memory<byte> ipv6Loopback = IPAddress.IPv6Loopback.GetAddressBytes();
+        public static Memory<byte> ipv6Multicast = IPAddress.Parse("ff00::").GetAddressBytes();
+        public static Memory<byte> ipv6Local = IPAddress.Parse("fe80::").GetAddressBytes();
+
         public static bool IsLan(this IPEndPoint endPoint)
         {
             if (endPoint == null) return false;
             return endPoint.Address.IsLan();
         }
-
-        /// <summary>
-        /// 判断是不是本地地址
-        /// </summary>
-        /// <param name="adress"></param>
-        /// <returns></returns>
         public static bool IsLan(this IPAddress address)
         {
             if (address == null) return false;
 
             return IsLan(address.GetAddressBytes().AsSpan());
         }
-
         public static bool IsLan(this Memory<byte> address)
         {
             return IsLan(address.Span);
         }
-
         public static bool IsLan(Span<byte> address)
         {
             if (address.Length < 4) return false;
@@ -68,7 +53,7 @@ namespace common.libs.extends
         public static bool GetIsBroadcastAddress(this Span<byte> address)
         {
             uint ip = BinaryPrimitives.ReadUInt32BigEndian(address);
-            return ip >= 0xE0000000 && ip <= 0xEFFFFFFF;
+            return (ip >= 0xE0000000 && ip <= 0xEFFFFFFF) || ip == 0xFFFFFFFF;
         }
 
 

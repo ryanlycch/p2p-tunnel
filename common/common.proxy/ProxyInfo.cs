@@ -3,14 +3,13 @@ using common.server;
 using common.server.model;
 using System;
 using System.Buffers;
+using System.ComponentModel;
 using System.Net;
 
 namespace common.proxy
 {
-    public sealed class ProxyInfo
+    public class ProxyBaseInfo
     {
-        #region 数据字段
-
         /// <summary>
         /// 保留字段，各协议可以根据自己的实际需求拿去玩儿
         /// </summary>
@@ -32,9 +31,15 @@ namespace common.proxy
         /// </summary>
         public EnumBufferSize BufferSize { get; set; } = EnumBufferSize.KB_8;
         /// <summary>
-        /// 插件id
+        /// 插件id 最多 0b1111
         /// </summary>
         public byte PluginId { get; set; }
+        /// <summary>
+        /// 测试步骤返回 最多 0b1111
+        /// </summary>
+        public EnumProxyCommandStatusMsg CommandStatusMsg { get; set; }
+
+        public EnumProxyCommandStatus CommandStatus { get; set; }
 
         /// <summary>
         /// 请求id
@@ -57,36 +62,22 @@ namespace common.proxy
         [System.Text.Json.Serialization.JsonIgnore]
         public Memory<byte> Data { get; set; }
 
-
-        #endregion
-
-        #region 辅助字段
-
-        /// <summary>
-        /// 监听的端口
-        /// </summary>
-        public ushort ListenPort { get; set; }
-        /// <summary>
-        /// 连接对象，在发送端表示目标连接，在接收端表示来源连接
-        /// </summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        public IConnection Connection { get; set; }
+        public Memory<byte> Headers { get; set; }
         [System.Text.Json.Serialization.JsonIgnore]
-        public byte[] Response { get; set; } = new byte[1];
-        [System.Text.Json.Serialization.JsonIgnore]
-        public IProxyPlugin ProxyPlugin { get; set; }
+        public int HttpIndex { get; set; }
 
-        #endregion
 
         public byte[] ToBytes(out int length)
         {
             length = 1 //0000 00 00  rsv + step + command
                 + 1 // 0000 0000 address type + buffer size
-                + 1 //PluginId
+                + 1 //TestResult + PluginId
+                + 1 //CommandResponse
                 + 4  // RequestId
                 + 1  //source length
-                + 1 // target
-                + Data.Length;
+                + 1 // target length
+                + Headers.Length + Data.Length;
 
             int sepLength = 0;
             if (SourceEP != null)
@@ -100,7 +91,7 @@ namespace common.proxy
             }
 
             byte[] bytes = ArrayPool<byte>.Shared.Rent(length);
-            var memory = bytes.AsMemory(0, length);
+            Memory<byte> memory = bytes.AsMemory(0, length);
             var span = memory.Span;
             int index = 0;
 
@@ -109,7 +100,10 @@ namespace common.proxy
             index += 1;
             bytes[index] = (byte)(((byte)AddressType << 4) | (byte)BufferSize);
             index += 1;
-            bytes[index] = PluginId;
+            bytes[index] = (byte)(((byte)CommandStatusMsg << 4) | PluginId);
+            index += 1;
+
+            bytes[index] = (byte)CommandStatus;
             index += 1;
 
             RequestId.ToBytes(memory.Slice(index));
@@ -139,11 +133,20 @@ namespace common.proxy
 
             if (Data.Length > 0)
             {
-                Data.CopyTo(memory.Slice(index));
+                Memory<byte> target = memory.Slice(index);
+                if (Headers.Length > 0)
+                {
+                    Data.Slice(0, HttpIndex).CopyTo(target);
+                    Headers.CopyTo(target.Slice(HttpIndex));
+                    Data.Slice(HttpIndex).CopyTo(target.Slice(HttpIndex + Headers.Length));
+                }
+                else
+                {
+                    Data.CopyTo(target);
+                }
             }
             return bytes;
         }
-
         public void DeBytes(Memory<byte> bytes)
         {
             var span = bytes.Span;
@@ -158,7 +161,11 @@ namespace common.proxy
             BufferSize = (EnumBufferSize)(span[index] & 0b0000_1111);
             index += 1;
 
-            PluginId = span[index];
+            CommandStatusMsg = (EnumProxyCommandStatusMsg)(span[index] >> 4);
+            PluginId = (byte)(span[index] & 0b0000_1111);
+            index += 1;
+
+            CommandStatus = (EnumProxyCommandStatus)span[index];
             index += 1;
 
             RequestId = span.Slice(index).ToUInt32();
@@ -184,21 +191,55 @@ namespace common.proxy
                 index += 2;
             }
 
-            Data = bytes.Slice(index);
+            var data = bytes.Slice(index);
+            Data = new byte[data.Length];
+            data.CopyTo(Data);
         }
-
         public static ProxyInfo Debytes(Memory<byte> data)
         {
             ProxyInfo info = new ProxyInfo();
             info.DeBytes(data);
             return info;
         }
-
         public void Return(byte[] data)
         {
             ArrayPool<byte>.Shared.Return(data);
         }
 
+        public static uint GetRequestId(Memory<byte> bytes)
+        {
+            return bytes.Span.Slice(3).ToUInt32();
+        }
+    }
+
+    public sealed class ProxyInfo : ProxyBaseInfo
+    {
+        public ushort ListenPort { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public IConnection Connection { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public IProxyPlugin ProxyPlugin { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public IPEndPoint ClientEP { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public HttpHeaderCacheInfo HeadersCache { get; set; }
+
+        public bool IsMagicData { get; set; }
+    }
+    public sealed class HttpHeaderCacheInfo
+    {
+        public IPAddress Addr { get; set; }
+        public string Name { get; set; }
+        public string Proxy { get; set; }
+
+        public byte[] Build()
+        {
+            return $"Snltty-Addr: {Addr}\r\nSnltty-Node: {Uri.UnescapeDataString(Name)}\r\nSnltty-Proxy: {Proxy}\r\n".ToBytes();
+        }
     }
 
     /// <summary>
@@ -315,6 +356,33 @@ namespace common.proxy
         Min = 900,
         Request = 901,
         Response = 902,
+        GetFirewall = 903,
+        AddFirewall = 904,
+        RemoveFirewall = 905,
+        Test = 906,
         Max = 999,
+    }
+
+    [Flags]
+    public enum EnumProxyCommandStatusMsg : byte
+    {
+        [Description("成功")]
+        Success = 0,
+        [Description("未监听")]
+        Listen = 1,
+        [Description("服务类型未允许")]
+        Address = 2,
+        [Description("与目标节点未连接")]
+        Connection = 3,
+        [Description("目标节点未允许通信")]
+        Denied = 4,
+        [Description("目标节点相应插件未找到")]
+        Plugin = 5,
+        [Description("目标节点相应插件未允许连接，且未拥有该权限")]
+        EnableOrAccess = 6,
+        [Description("目标节点防火墙阻止")]
+        Firewail = 7,
+        [Description("目标服务连接失败")]
+        Connect = 8
     }
 }

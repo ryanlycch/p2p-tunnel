@@ -1,7 +1,6 @@
 ﻿using common.proxy;
 using common.socks5;
-using server.messengers;
-using common.libs.extends;
+using common.server;
 
 namespace server.service.socks5
 {
@@ -12,27 +11,9 @@ namespace server.service.socks5
 
     public class ServerSocks5ProxyPlugin : Socks5ProxyPlugin, IServerSocks5ProxyPlugin
     {
-        public static uint Access => 0b00000000_00000000_00000000_00010000;
-        private readonly IServiceAccessValidator serviceAccessProvider;
-        public ServerSocks5ProxyPlugin(common.socks5.Config config, IProxyServer proxyServer, IServiceAccessValidator serviceAccessProvider)
+        public ServerSocks5ProxyPlugin(common.socks5.Config config, IProxyServer proxyServer)
             : base(config, proxyServer)
         {
-            this.serviceAccessProvider = serviceAccessProvider;
-        }
-
-        public override bool ValidateAccess(ProxyInfo info)
-        {
-           
-#if DEBUG
-            return true;
-#else
-            if (info.TargetAddress.IsLan())
-            {
-                return serviceAccessProvider.Validate(info.Connection, (uint)EnumServiceAccess.Setting);
-            }
-
-            return base.ValidateAccess(info) || serviceAccessProvider.Validate(info.Connection, Access);
-#endif
         }
     }
 }

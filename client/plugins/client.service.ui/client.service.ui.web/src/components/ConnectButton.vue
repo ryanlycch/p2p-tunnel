@@ -1,6 +1,6 @@
 <template>
     <div>
-        <a href="javascript:;" class="t-c" :class="className" @click="handle">
+        <a id="connect-btn" href="javascript:;" class="t-c" :class="className" @click="handle">
             <template v-if="loading">
                 <div class="loading">
                     <Loading :size="20" color="#f5f5f5"></Loading>
@@ -18,16 +18,22 @@
 </template>  
  
 <script>
-import { computed } from '@vue/reactivity'
+import { computed, ref } from '@vue/reactivity'
 import Loading from './Loading.vue'
+import { watch } from 'vue';
 export default {
     props: ['modelValue', 'loading'],
     emits: ['handle'],
     components: { Loading },
     setup(props, { emit }) {
 
+        const connected = ref(props.modelValue);
+        watch(() => props.modelValue, (val) => {
+            connected.value = val;
+        });
+
         const loading = computed(() => props.loading);
-        const connected = computed(() => props.modelValue);
+
         const className = computed(() => connected.value ? 'green' : 'gray');
 
         const handle = () => {

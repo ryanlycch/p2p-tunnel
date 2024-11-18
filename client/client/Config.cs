@@ -16,15 +16,8 @@ namespace client
     [Table("appsettings")]
     public sealed class Config
     {
-        /// <summary>
-        /// 
-        /// </summary>
         public Config() { }
         private readonly IConfigDataProvider<Config> configDataProvider;
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="configDataProvider"></param>
         public Config(IConfigDataProvider<Config> configDataProvider)
         {
             this.configDataProvider = configDataProvider;
@@ -37,6 +30,7 @@ namespace client
             {
                 Client.Name = $"{Environment.MachineName}_{Environment.UserName}";
             }
+            SaveConfig(this).Wait();
         }
         /// <summary>
         /// 客户端配置
@@ -53,7 +47,7 @@ namespace client
         /// <returns></returns>
         public async Task<Config> ReadConfig()
         {
-            return await configDataProvider.Load();
+            return await configDataProvider.Load() ?? new Config();
         }
         public async Task SaveConfig(Config config)
         {
@@ -136,7 +130,7 @@ namespace client
         /// <summary>
         /// udp限速
         /// </summary>
-        public int UdpUploadSpeedLimit { get; set; }
+        public int UdpUploadSpeedLimit { get; set; } = 1048576;
 
         public string[] Services { get; set; } = Array.Empty<string>();
 
@@ -144,6 +138,13 @@ namespace client
         /// TCP禁用delay
         /// </summary>
         public bool NoDelay { get; set; } = false;
+        public ulong ConnectId { get; set; }
+
+        public ushort TTL { get; set; } = 1;
+
+        public bool HighConfig { get; set; } = false;
+
+        public string UIPassword { get; set; } = string.Empty;
 
         /// <summary>
         /// 绑定ip
@@ -179,7 +180,6 @@ namespace client
                 | (UseUdp ? EnumClientAccess.UseUdp : EnumClientAccess.None)
                 | (UseTcp ? EnumClientAccess.UseTcp : EnumClientAccess.None)
                 | (UsePunchHole ? EnumClientAccess.UsePunchHole : EnumClientAccess.None)
-                | (UseRelay ? EnumClientAccess.UseRelay : EnumClientAccess.None)
                 | (AutoRelay ? EnumClientAccess.UseAutoRelay : EnumClientAccess.None);
 
         }
@@ -191,7 +191,7 @@ namespace client
         public string Name { get; set; } = string.Empty;
         public string Ip { get; set; } = string.Empty;
         public ushort UdpPort { get; set; } = 5410;
-        public ushort TcpPort { get; set; } = 59410;
+        public ushort TcpPort { get; set; } = 5410;
     }
 
     /// <summary>
@@ -217,10 +217,9 @@ namespace client
         /// </summary>
         UsePunchHole = 4,
         /// <summary>
-        /// 中继节点
+        /// 自动中继
         /// </summary>
-        UseRelay = 8,
-        UseAutoRelay = 16,
+        UseAutoRelay = 8,
         /// <summary>
         /// 全部
         /// </summary>
@@ -235,15 +234,15 @@ namespace client
         /// <summary>
         /// ip
         /// </summary>
-        public string Ip { get; set; } = string.Empty;
+        public string Ip { get; set; } = IPAddress.Loopback.ToString();
         /// <summary>
         /// udp端口
         /// </summary>
-        public int UdpPort { get; set; } = 8099;
+        public int UdpPort { get; set; } = 5410;
         /// <summary>
         /// tcp端口
         /// </summary>
-        public int TcpPort { get; set; } = 8000;
+        public int TcpPort { get; set; } = 5410;
         /// <summary>
         /// 加密
         /// </summary>
@@ -256,6 +255,9 @@ namespace client
         /// <summary>
         /// 服务器选项列表
         /// </summary>
-        public ServerItem[] Items { get; set; } = Array.Empty<ServerItem>();
+        public ServerItem[] Items { get; set; } = new ServerItem[] {
+            new ServerItem{ Img="zgxg", Ip = "hk.p2p.snltty.com", TcpPort = 5410, UdpPort = 5410, Name = "公网" },
+            new ServerItem{ Img="zg", Ip = "127.0.0.1", TcpPort = 5410, UdpPort = 5410, Name = "本地" },
+        };
     }
 }

@@ -22,15 +22,6 @@ namespace client.service.socks5
         }
 
         /// <summary>
-        /// 获取配置
-        /// </summary>
-        /// <param name="arg"></param>
-        /// <returns></returns>
-        public common.socks5.Config Get(ClientServiceParamsInfo arg)
-        {
-            return config;
-        }
-        /// <summary>
         /// 获取pac
         /// </summary>
         /// <param name="arg"></param>
@@ -40,22 +31,14 @@ namespace client.service.socks5
             return socks5Transfer.GetPac();
         }
 
-        /// <summary>
-        /// 设置配置
-        /// </summary>
-        /// <param name="arg"></param>
-        public async Task Set(ClientServiceParamsInfo arg)
-        {
-            await config.SaveConfig(arg.Content);
-        }
-        public void Run(ClientServiceParamsInfo arg)
+        public bool Run(ClientServiceParamsInfo arg)
         {
             proxyServer.Stop(config.Plugin);
             if (config.ListenEnable)
             {
                 try
                 {
-                    proxyServer.Start((ushort)config.ListenPort, config.Plugin);
+                    return proxyServer.Start((ushort)config.ListenPort, config.Plugin);
                 }
                 catch (Exception ex)
                 {
@@ -63,9 +46,8 @@ namespace client.service.socks5
                 }
             }
             socks5Transfer.UpdatePac();
+            return true;
         }
-
-
 
         /// <summary>
         /// 更新pac内容
@@ -76,5 +58,9 @@ namespace client.service.socks5
             socks5Transfer.UpdatePac(arg.Content);
         }
 
+        public async Task<EnumProxyCommandStatusMsg> Test(ClientServiceParamsInfo arg)
+        {
+            return await socks5Transfer.Test();
+        }
     }
 }

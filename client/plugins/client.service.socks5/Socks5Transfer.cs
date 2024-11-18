@@ -1,7 +1,15 @@
-﻿using common.libs;
+﻿using client.service.ui.api.clientServer;
+using common.libs;
+using common.libs.extends;
+using common.proxy;
 using System;
+using System.Buffers;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace client.service.socks5
 {
@@ -26,6 +34,13 @@ namespace client.service.socks5
                     ClearPac();
                 }
             };
+            Console.CancelKeyPress += (s, e) =>
+            {
+                if (set)
+                {
+                    ClearPac();
+                }
+            };
             //安卓注释
             //Console.CancelKeyPress += (s, e) => ClearPac();
         }
@@ -38,6 +53,12 @@ namespace client.service.socks5
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
+                /*
+                if (File.Exists(Path.Join(uiconfig.Web.Root, "socks-custom.pac")))
+                {
+                    return File.ReadAllText((Path.Join(uiconfig.Web.Root, "socks-custom.pac"));
+                }
+                */
                 return File.ReadAllText("./socks-custom.pac");
             }
             return string.Empty;
@@ -57,7 +78,7 @@ namespace client.service.socks5
                     string file = string.Empty;
                     if (config.IsCustomPac)
                     {
-                        file = Path.Join(uiconfig.Web.Root, "socks-custom.pac"); ;
+                        file = Path.Join(uiconfig.Web.Root, "socks-custom.pac");
                         pacContent = File.ReadAllText("./socks-custom.pac");
                     }
                     else
@@ -66,12 +87,13 @@ namespace client.service.socks5
                         pacContent = File.ReadAllText("./socks.pac");
                     }
 
-                    pacContent = pacContent.Replace("{socks5-address}", $"127.0.0.1:{config.ListenPort}");
+                    pacContent = pacContent.Replace("{socks5-address}", $"{config.ProxyIp}:{config.ListenPort}");
                     File.WriteAllText(file, pacContent);
 
                     if (config.ListenEnable && config.IsPac)
                     {
-                        SetPac($"http://{(uiconfig.Web.BindIp == "+" ? "127.0.0.1" : uiconfig.Web.BindIp)}:{uiconfig.Web.Port}/{Path.GetFileName(file)}");
+                        string pac = $"http://{(uiconfig.Web.BindIp == "+" ? config.ProxyIp.ToString() : uiconfig.Web.BindIp)}:{uiconfig.Web.Port}/{Path.GetFileName(file)}";
+                        SetPac(pac, $"socks5://{config.ProxyIp}:{config.ListenPort}");
                     }
                     else
                     {
@@ -99,11 +121,12 @@ namespace client.service.socks5
         /// <summary>
         /// 更新pac
         /// </summary>
-        /// <param name="url"></param>
-        public void SetPac(string url)
+        /// <param name="pacUrl"></param>
+        /// <param name="proxyUrl"></param>
+        public void SetPac(string pacUrl, string proxyUrl)
         {
             set = true;
-            ProxySystemSetting.Set(url);
+            ProxySystemSetting.Set(pacUrl, proxyUrl);
         }
 
         /// <summary>
@@ -113,6 +136,51 @@ namespace client.service.socks5
         {
             set = false;
             ProxySystemSetting.Clear();
+        }
+
+        public async Task<EnumProxyCommandStatusMsg> Test()
+        {
+            if (config.ListenEnable == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+            if (ProxyPluginLoader.GetPlugin(config.Plugin, out IProxyPlugin plugin) == false)
+            {
+                return EnumProxyCommandStatusMsg.Listen;
+            }
+
+            IPEndPoint target = new IPEndPoint(config.ProxyIp, config.ListenPort);
+            try
+            {
+                using Socket socket = new Socket(target.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(target);
+
+                byte[] bytes = new byte[ProxyHelper.MagicData.Length];
+                //request
+                await socket.SendAsync(new byte[] { 0x05, 0x01, 0 }, SocketFlags.None);
+                await socket.ReceiveAsync(bytes, SocketFlags.None);
+                //command
+                byte[] socks5Data = new byte[] { 0x05, 0x01, 0, 0x01, 8, 8, 8, 8, 0,53 };
+                byte[] data = new byte[bytes.Length + socks5Data.Length];
+                socks5Data.AsSpan().CopyTo(data);
+                ProxyHelper.MagicData.AsSpan().CopyTo(data.AsSpan(socks5Data.Length));
+                await socket.SendAsync(data, SocketFlags.None);
+
+                int length = await socket.ReceiveAsync(bytes, SocketFlags.None);
+                socket.SafeClose();
+
+                EnumProxyCommandStatusMsg statusMsg = EnumProxyCommandStatusMsg.Listen;
+                if (length > 0)
+                {
+                    statusMsg = (EnumProxyCommandStatusMsg)bytes[0];
+                }
+                return statusMsg;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex + "");
+            }
+            return EnumProxyCommandStatusMsg.Listen;
         }
     }
 

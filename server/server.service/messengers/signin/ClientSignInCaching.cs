@@ -2,20 +2,21 @@
 using common.libs.extends;
 using common.libs.rateLimit;
 using common.server;
-using server.messengers.singnin;
+using common.server.model;
+using common.server.servers.rudp;
+using server.messengers.signin;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 
-namespace server.service.messengers.singnin
+namespace server.service.messengers.signin
 {
     public sealed class ClientSignInCaching : IClientSignInCaching
     {
         private readonly ConcurrentDictionary<ulong, SignInCacheInfo> cache = new();
         private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, SignInCacheInfo>> cacheGroups = new();
-        private NumberSpace idNs = new NumberSpace(0);
         private readonly Config config;
 
         public Action<SignInCacheInfo> OnChanged { get; set; } = (param) => { };
@@ -24,18 +25,19 @@ namespace server.service.messengers.singnin
         private readonly WheelTimer<IConnection> wheelTimer = new WheelTimer<IConnection>();
 
         private readonly IRateLimit<IPAddress> rateLimit;
+        private readonly MessengerSender messengerSender;
 
         public int Count { get => cache.Count; }
 
-        public ClientSignInCaching(Config config, IUdpServer udpServer, ITcpServer tcpServer)
+        public ClientSignInCaching(Config config, IUdpServer udpServer, ITcpServer tcpServer, MessengerSender messengerSender)
         {
             this.config = config;
-
+            this.messengerSender = messengerSender;
+           
             if (config.ConnectLimit > 0)
             {
                 rateLimit = new TokenBucketRatelimit<IPAddress>(config.ConnectLimit);
             }
-
             tcpServer.OnDisconnect += Disconnected;
             tcpServer.OnConnected = AddConnectedTimeout;
             udpServer.OnConnected = AddConnectedTimeout;
@@ -72,29 +74,34 @@ namespace server.service.messengers.singnin
         }
         public SignInCacheInfo Add(SignInCacheInfo model)
         {
-            lock (idNs)
+            if (model.ConnectionId == 0)
             {
-                if (model.ConnectionId == 0)
+                do
                 {
-                    model.ConnectionId = idNs.Increment();
-                }
-                if (string.IsNullOrWhiteSpace(model.GroupId))
-                {
-                    model.GroupId = Guid.NewGuid().ToString().Md5();
-                }
-                if (cacheGroups.TryGetValue(model.GroupId, out ConcurrentDictionary<string, SignInCacheInfo> value) == false)
-                {
-                    value = new ConcurrentDictionary<string, SignInCacheInfo>();
-                    cacheGroups.TryAdd(model.GroupId, value);
-                }
-                if (model.Connection != null)
-                {
-                    model.Connection.ConnectId = model.ConnectionId;
-                }
-                value.TryAdd(model.Name, model);
-                cache.TryAdd(model.ConnectionId, model);
-            }
+                    string str = BitConverter.ToUInt64(Guid.NewGuid().ToByteArray()).ToString();
+                    if (str.Length > 15)
+                    {
+                        str = str.Substring(str.Length - 15, 15);
+                    }
+                    model.ConnectionId = ulong.Parse(str);
 
+                } while (cache.ContainsKey(model.ConnectionId));
+            }
+            if (string.IsNullOrWhiteSpace(model.GroupId))
+            {
+                model.GroupId = Guid.NewGuid().ToString().Md5();
+            }
+            if (cacheGroups.TryGetValue(model.GroupId, out ConcurrentDictionary<string, SignInCacheInfo> value) == false)
+            {
+                value = new ConcurrentDictionary<string, SignInCacheInfo>();
+                cacheGroups.TryAdd(model.GroupId, value);
+            }
+            if (model.Connection != null)
+            {
+                model.Connection.ConnectId = model.ConnectionId;
+            }
+            value.TryAdd(model.Name, model);
+            cache.TryAdd(model.ConnectionId, model);
             OnLine?.Invoke(model);
             return model;
         }
@@ -129,6 +136,7 @@ namespace server.service.messengers.singnin
             {
                 client.Connection?.Disponse();
                 OnChanged?.Invoke(client);
+                Notify(client);
                 OnOffline?.Invoke(client);
 
                 if (cacheGroups.TryGetValue(client.GroupId, out ConcurrentDictionary<string, SignInCacheInfo> value))
@@ -151,8 +159,38 @@ namespace server.service.messengers.singnin
             if (Get(connectionid, out SignInCacheInfo client))
             {
                 OnChanged?.Invoke(client);
+                Notify(client);
             }
             return false;
+        }
+
+        private void Notify(SignInCacheInfo cache)
+        {
+            List<ClientsClientInfo> clients = Get(cache.GroupId).Where(c => c.Connection != null && c.Connection.Connected).OrderBy(c => c.ConnectionId).Select(c => new ClientsClientInfo
+            {
+                Connection = c.Connection,
+                ConnectionId = c.ConnectionId,
+                Name = c.Name,
+                ClientAccess = c.ClientAccess,
+                UserAccess = c.UserAccess
+            }).ToList();
+
+            if (clients.Any())
+            {
+                byte[] bytes = new ClientsInfo
+                {
+                    Clients = clients.ToArray()
+                }.ToBytes();
+                foreach (ClientsClientInfo client in clients)
+                {
+                    messengerSender.SendOnly(new MessageRequestWrap
+                    {
+                        Connection = client.Connection,
+                        Payload = bytes,
+                        MessengerId = (ushort)ClientsMessengerIds.Notify
+                    }).Wait();
+                }
+            }
         }
     }
 }

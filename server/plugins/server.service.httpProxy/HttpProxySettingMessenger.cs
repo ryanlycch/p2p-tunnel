@@ -2,7 +2,6 @@
 using common.libs;
 using common.server;
 using server.messengers.singnin;
-using server.messengers;
 using System.Threading.Tasks;
 using common.httpProxy;
 
@@ -37,7 +36,7 @@ namespace server.service.httpProxy
                 connection.Write(Helper.FalseArray);
                 return;
             }
-            if (serviceAccessValidator.Validate(connection, (uint)EnumServiceAccess.Setting) == false)
+            if (serviceAccessValidator.Validate(connection.ConnectId, (uint)common.server.EnumServiceAccess.Setting) == false)
             {
                 connection.Write(Helper.FalseArray);
                 return;

@@ -45,19 +45,24 @@ namespace common.libs.database
     {
         public async Task<T> Load()
         {
+            string fileName = GetTableName(typeof(T));
             try
             {
-                string fileName = GetTableName(typeof(T));
                 if (File.Exists(fileName))
                 {
                     string str = (await File.ReadAllTextAsync(fileName).ConfigureAwait(false));
                     return str.DeJson<T>();
                 }
+                else
+                {
+                    Logger.Instance.Warning($"{fileName} 配置文件缺失~");
+                }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Logger.Instance.Error($"{fileName} 配置文件解析有误~ :{ex}");
             }
-            return default;
+            return null;
         }
         public async Task<string> LoadString()
         {
@@ -71,13 +76,25 @@ namespace common.libs.database
 
         public async Task Save(T model)
         {
-            string fileName = GetTableName(typeof(T));
-            await File.WriteAllTextAsync(fileName, model.ToJsonIndented(), Encoding.UTF8).ConfigureAwait(false);
+            try
+            {
+                string fileName = GetTableName(typeof(T));
+                await File.WriteAllTextAsync(fileName, model.ToJsonIndented(), Encoding.UTF8).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
         }
         public async Task Save(string jsonStr)
         {
-            string fileName = GetTableName(typeof(T));
-            await File.WriteAllTextAsync(fileName, jsonStr, Encoding.UTF8).ConfigureAwait(false);
+            try
+            {
+                string fileName = GetTableName(typeof(T));
+                await File.WriteAllTextAsync(fileName, jsonStr, Encoding.UTF8).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
         }
 
         private string GetTableName(Type type)
